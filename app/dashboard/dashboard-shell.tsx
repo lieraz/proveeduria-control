@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
 import { createClient } from "@/src/lib/supabase/client";
@@ -18,7 +19,20 @@ const navigation = [
   { label: "Facturación", href: "/dashboard/facturacion" },
 ];
 
-export function DashboardShell() {
+type DashboardShellProps = {
+  children?: ReactNode;
+  description?: string;
+  eyebrow?: string;
+  title?: string;
+};
+
+export function DashboardShell({
+  children,
+  description = "Vista inicial para coordinar solicitudes, cotizaciones, compras, entregas y facturación del equipo interno.",
+  eyebrow = "Panel principal",
+  title = "Control Proveeduría",
+}: DashboardShellProps) {
+  const pathname = usePathname();
   const router = useRouter();
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -92,15 +106,23 @@ export function DashboardShell() {
           </div>
 
           <nav className="flex gap-2 overflow-x-auto px-4 py-4 lg:flex-col lg:overflow-x-visible">
-            {navigation.map((item) => (
-              <Link
-                className="whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium text-stone-700 transition hover:bg-emerald-50 hover:text-emerald-900 first:bg-emerald-800 first:text-white first:hover:bg-emerald-900 first:hover:text-white"
-                href={item.href}
-                key={item.href}
-              >
-                {item.label}
-              </Link>
-            ))}
+            {navigation.map((item) => {
+              const isActive = pathname === item.href;
+
+              return (
+                <Link
+                  className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition ${
+                    isActive
+                      ? "bg-emerald-800 text-white hover:bg-emerald-900"
+                      : "text-stone-700 hover:bg-emerald-50 hover:text-emerald-900"
+                  }`}
+                  href={item.href}
+                  key={item.href}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
           </nav>
         </aside>
 
@@ -125,32 +147,33 @@ export function DashboardShell() {
           <div className="flex-1 px-5 py-6 sm:px-8">
             <div className="mb-8">
               <p className="text-sm font-medium uppercase tracking-wide text-emerald-700">
-                Panel principal
+                {eyebrow}
               </p>
               <h2 className="mt-2 text-3xl font-semibold tracking-tight">
-                Control Proveeduría
+                {title}
               </h2>
               <p className="mt-3 max-w-3xl text-sm leading-6 text-stone-600">
-                Vista inicial para coordinar solicitudes, cotizaciones, compras,
-                entregas y facturación del equipo interno.
+                {description}
               </p>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-3">
-              {[
-                ["Solicitudes abiertas", "Pendientes de revisar"],
-                ["Cotizaciones", "En preparación"],
-                ["Entregas", "Seguimiento operativo"],
-              ].map(([title, description]) => (
-                <article
-                  className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm"
-                  key={title}
-                >
-                  <h3 className="text-base font-semibold">{title}</h3>
-                  <p className="mt-2 text-sm text-stone-600">{description}</p>
-                </article>
-              ))}
-            </div>
+            {children ?? (
+              <div className="grid gap-4 md:grid-cols-3">
+                {[
+                  ["Solicitudes abiertas", "Pendientes de revisar"],
+                  ["Cotizaciones", "En preparación"],
+                  ["Entregas", "Seguimiento operativo"],
+                ].map(([title, description]) => (
+                  <article
+                    className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm"
+                    key={title}
+                  >
+                    <h3 className="text-base font-semibold">{title}</h3>
+                    <p className="mt-2 text-sm text-stone-600">{description}</p>
+                  </article>
+                ))}
+              </div>
+            )}
           </div>
         </section>
       </div>
