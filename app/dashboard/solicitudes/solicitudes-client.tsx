@@ -11,12 +11,9 @@ type ClientRecord = {
 type ContactRecord = {
   id: string;
   client_id: string | null;
-  name?: string | null;
-  full_name?: string | null;
   contact_name?: string | null;
-  department?: string | null;
-  dependencia?: string | null;
-  area?: string | null;
+  organization_area?: string | null;
+  position?: string | null;
   email?: string | null;
   phone?: string | null;
 };
@@ -25,7 +22,7 @@ type RequestRecord = {
   id: string;
   folio: string | null;
   client_id: string | null;
-  contact_id: string | null;
+  contact_ref_id: string | null;
   requested_at: string | null;
   requested_by: string | null;
   channel: string | null;
@@ -37,7 +34,7 @@ type RequestRecord = {
 
 type RequestFormState = {
   client_id: string;
-  contact_id: string;
+  contact_ref_id: string;
   requested_at: string;
   requested_by: string;
   channel: string;
@@ -65,7 +62,7 @@ function todayDate() {
 function emptyForm(): RequestFormState {
   return {
     client_id: "",
-    contact_id: "",
+    contact_ref_id: "",
     requested_at: todayDate(),
     requested_by: "",
     channel: "whatsapp",
@@ -95,12 +92,30 @@ function contactLabel(contact: ContactRecord | undefined) {
     return "Sin contacto";
   }
 
-  const name =
-    contact.name ?? contact.full_name ?? contact.contact_name ?? "Sin nombre";
-  const dependency =
-    contact.dependencia ?? contact.department ?? contact.area ?? null;
+  const name = contact.contact_name ?? "Sin nombre";
+  const details = [contact.organization_area, contact.position].filter(Boolean);
 
-  return dependency ? `${dependency} - ${name}` : name;
+  return details.length > 0 ? `${name} - ${details.join(" - ")}` : name;
+}
+
+function ContactSummary({ contact }: { contact: ContactRecord | undefined }) {
+  if (!contact) {
+    return "Sin contacto";
+  }
+
+  return (
+    <div className="space-y-1">
+      <p className="font-medium text-stone-800">
+        {contact.contact_name || "Sin nombre"}
+      </p>
+      {contact.organization_area ? (
+        <p className="text-xs text-stone-500">{contact.organization_area}</p>
+      ) : null}
+      {contact.position ? (
+        <p className="text-xs text-stone-500">{contact.position}</p>
+      ) : null}
+    </div>
+  );
 }
 
 function sortContacts(contactsToSort: ContactRecord[]) {
@@ -174,7 +189,7 @@ export function SolicitudesClient() {
       const { data, error } = await supabase
         .from("client_requests")
         .select(
-          "id,folio,client_id,contact_id,requested_at,requested_by,channel,description,urgency,status,notes",
+          "id,folio,client_id,contact_ref_id,requested_at,requested_by,channel,description,urgency,status,notes",
         )
         .eq("company_id", activeCompanyId)
         .order("requested_at", { ascending: false });
@@ -253,8 +268,10 @@ export function SolicitudesClient() {
 
       if (clientIds.length > 0) {
         const { data: contactsData, error: contactsError } = await supabase
-          .from("client_contacts")
-          .select("*")
+          .from("contacts")
+          .select("id,client_id,contact_name,organization_area,position,email,phone")
+          .eq("company_id", activeCompanyId)
+          .eq("active", true)
           .in("client_id", clientIds);
 
         if (contactsError) {
@@ -310,7 +327,7 @@ export function SolicitudesClient() {
 
     const payload = {
       client_id: form.client_id,
-      contact_id: cleanOptionalValue(form.contact_id),
+      contact_ref_id: cleanOptionalValue(form.contact_ref_id),
       requested_at: form.requested_at,
       requested_by: cleanOptionalValue(form.requested_by),
       channel: form.channel,
@@ -348,7 +365,7 @@ export function SolicitudesClient() {
     setEditingFolio(request.folio);
     setForm({
       client_id: request.client_id ?? "",
-      contact_id: request.contact_id ?? "",
+      contact_ref_id: request.contact_ref_id ?? "",
       requested_at: formatDate(request.requested_at),
       requested_by: request.requested_by ?? "",
       channel: channelOptions.includes(request.channel ?? "")
@@ -492,7 +509,7 @@ export function SolicitudesClient() {
                 setForm((currentForm) => ({
                   ...currentForm,
                   client_id: event.target.value,
-                  contact_id: "",
+                  contact_ref_id: "",
                 }))
               }
               required
@@ -510,22 +527,22 @@ export function SolicitudesClient() {
           <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
-              htmlFor="contact_id"
+              htmlFor="contact_ref_id"
             >
               Dependencia/contacto
             </label>
             <select
               className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
               disabled={isLoading || isSaving || !form.client_id}
-              id="contact_id"
-              name="contact_id"
+              id="contact_ref_id"
+              name="contact_ref_id"
               onChange={(event) =>
                 setForm((currentForm) => ({
                   ...currentForm,
-                  contact_id: event.target.value,
+                  contact_ref_id: event.target.value,
                 }))
               }
-              value={form.contact_id}
+              value={form.contact_ref_id}
             >
               <option value="">Sin contacto</option>
               {filteredContacts.map((contact) => (
@@ -782,9 +799,13 @@ export function SolicitudesClient() {
                         : "Sin cliente"}
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {request.contact_id
-                        ? contactLabel(contactsById.get(request.contact_id))
-                        : "Sin contacto"}
+                      <ContactSummary
+                        contact={
+                          request.contact_ref_id
+                            ? contactsById.get(request.contact_ref_id)
+                            : undefined
+                        }
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
                       {formatDate(request.requested_at)}

@@ -12,12 +12,11 @@ type ClientRecord = {
 type ContactRecord = {
   id: string;
   client_id: string | null;
-  name?: string | null;
-  full_name?: string | null;
   contact_name?: string | null;
-  department?: string | null;
-  dependencia?: string | null;
-  area?: string | null;
+  organization_area?: string | null;
+  position?: string | null;
+  phone?: string | null;
+  email?: string | null;
 };
 
 type ProductRecord = {
@@ -36,7 +35,7 @@ type QuotationRecord = {
   id: string;
   folio: string | null;
   client_id: string | null;
-  contact_id: string | null;
+  contact_ref_id: string | null;
   quoted_at: string | null;
   valid_until: string | null;
   status: string | null;
@@ -135,12 +134,10 @@ function contactLabel(contact: ContactRecord | undefined) {
     return "Sin contacto";
   }
 
-  const name =
-    contact.name ?? contact.full_name ?? contact.contact_name ?? "Sin nombre";
-  const dependency =
-    contact.dependencia ?? contact.department ?? contact.area ?? null;
+  const name = contact.contact_name ?? "Sin nombre";
+  const details = [contact.organization_area, contact.position].filter(Boolean);
 
-  return dependency ? `${dependency} - ${name}` : name;
+  return details.length > 0 ? `${name} - ${details.join(" - ")}` : name;
 }
 
 export function CotizacionDetalleClient({
@@ -261,7 +258,7 @@ export function CotizacionDetalleClient({
       const { data: quotationData, error: quotationError } = await supabase
         .from("quotations")
         .select(
-          "id,folio,client_id,contact_id,quoted_at,valid_until,status,notes",
+          "id,folio,client_id,contact_ref_id,quoted_at,valid_until,status,notes",
         )
         .eq("company_id", activeCompanyId)
         .eq("id", quotationId)
@@ -293,8 +290,10 @@ export function CotizacionDetalleClient({
           .eq("company_id", activeCompanyId)
           .order("name", { ascending: true }),
         supabase
-          .from("client_contacts")
-          .select("*"),
+          .from("contacts")
+          .select("id,client_id,contact_name,organization_area,position,phone,email")
+          .eq("company_id", activeCompanyId)
+          .eq("active", true),
         supabase
           .from("products")
           .select("id,name,description,unit")
@@ -525,8 +524,11 @@ export function CotizacionDetalleClient({
   const clientName = quotation?.client_id
     ? clientsById.get(quotation.client_id)?.name ?? "Cliente no disponible"
     : "Sin cliente";
-  const contactName = quotation?.contact_id
-    ? contactLabel(contactsById.get(quotation.contact_id))
+  const selectedContact = quotation?.contact_ref_id
+    ? contactsById.get(quotation.contact_ref_id)
+    : undefined;
+  const contactName = quotation?.contact_ref_id
+    ? contactLabel(selectedContact)
     : "Sin contacto";
 
   return (
@@ -580,7 +582,19 @@ export function CotizacionDetalleClient({
                 <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
                   Dependencia/contacto
                 </p>
-                <p className="mt-1 text-sm text-stone-800">{contactName}</p>
+                <div className="mt-1 space-y-1 text-sm text-stone-800">
+                  <p>{contactName}</p>
+                  {selectedContact?.phone ? (
+                    <p className="text-xs text-stone-500">
+                      Tel. {selectedContact.phone}
+                    </p>
+                  ) : null}
+                  {selectedContact?.email ? (
+                    <p className="text-xs text-stone-500">
+                      {selectedContact.email}
+                    </p>
+                  ) : null}
+                </div>
               </div>
               <div>
                 <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
@@ -960,7 +974,21 @@ export function CotizacionDetalleClient({
               <p className="font-semibold text-stone-950">
                 Dependencia/contacto
               </p>
-              <p className="mt-1 text-stone-700">{contactName}</p>
+              <div className="mt-1 space-y-1 text-stone-700">
+                <p>{selectedContact?.contact_name || contactName}</p>
+                {selectedContact?.organization_area ? (
+                  <p>Área: {selectedContact.organization_area}</p>
+                ) : null}
+                {selectedContact?.position ? (
+                  <p>Puesto: {selectedContact.position}</p>
+                ) : null}
+                {selectedContact?.phone ? (
+                  <p>Teléfono: {selectedContact.phone}</p>
+                ) : null}
+                {selectedContact?.email ? (
+                  <p>Correo: {selectedContact.email}</p>
+                ) : null}
+              </div>
             </div>
           </div>
 

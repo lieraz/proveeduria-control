@@ -5,17 +5,18 @@ import { createClient } from "@/src/lib/supabase/client";
 
 type ContactRecord = {
   id: string;
-  department: string | null;
+  organization_area: string | null;
   contact_name: string | null;
   position: string | null;
   phone: string | null;
   whatsapp: string | null;
   email: string | null;
   notes: string | null;
+  active: boolean;
 };
 
 type ContactFormState = {
-  department: string;
+  organization_area: string;
   contact_name: string;
   position: string;
   phone: string;
@@ -26,17 +27,15 @@ type ContactFormState = {
 
 type ContactosSectionProps = {
   companyId: string | null;
-  includeDepartment?: boolean;
   ownerId: string;
   ownerIdColumn: "client_id" | "supplier_id";
   ownerLabel: "cliente" | "proveedor";
   ownerName: string;
-  tableName: "client_contacts" | "supplier_contacts";
   onClose: () => void;
 };
 
 const emptyContactForm: ContactFormState = {
-  department: "",
+  organization_area: "",
   contact_name: "",
   position: "",
   phone: "",
@@ -52,12 +51,10 @@ function cleanOptionalValue(value: string) {
 
 export function ContactosSection({
   companyId,
-  includeDepartment = false,
   ownerId,
   ownerIdColumn,
   ownerLabel,
   ownerName,
-  tableName,
   onClose,
 }: ContactosSectionProps) {
   const supabase = useMemo(() => createClient(), []);
@@ -79,13 +76,9 @@ export function ContactosSection({
     setIsLoading(true);
     setErrorMessage("");
 
-    const selectColumns = includeDepartment
-      ? "id,department,contact_name,position,phone,whatsapp,email,notes"
-      : "id,contact_name,position,phone,whatsapp,email,notes";
-
     const { data, error } = await supabase
-      .from(tableName)
-      .select(selectColumns)
+      .from("contacts")
+      .select("id,organization_area,contact_name,position,phone,whatsapp,email,notes,active")
       .eq("company_id", companyId)
       .eq(ownerIdColumn, ownerId)
       .order("contact_name", { ascending: true });
@@ -98,15 +91,8 @@ export function ContactosSection({
       return;
     }
 
-    const contactRows = (data ?? []) as Partial<ContactRecord>[];
-
-    setContacts(
-      contactRows.map((contact) => ({
-        department: null,
-        ...contact,
-      })) as ContactRecord[],
-    );
-  }, [companyId, includeDepartment, ownerId, ownerIdColumn, supabase, tableName]);
+    setContacts((data ?? []) as ContactRecord[]);
+  }, [companyId, ownerId, ownerIdColumn, supabase]);
 
   useEffect(() => {
     async function loadInitialContacts() {
@@ -136,27 +122,27 @@ export function ContactosSection({
 
     const payload = {
       contact_name: contactName,
+      organization_area: cleanOptionalValue(form.organization_area),
       position: cleanOptionalValue(form.position),
       phone: cleanOptionalValue(form.phone),
       whatsapp: cleanOptionalValue(form.whatsapp),
       email: cleanOptionalValue(form.email),
       notes: cleanOptionalValue(form.notes),
-      ...(includeDepartment
-        ? { department: cleanOptionalValue(form.department) }
-        : {}),
+      client_id: ownerIdColumn === "client_id" ? ownerId : null,
+      supplier_id: ownerIdColumn === "supplier_id" ? ownerId : null,
     };
 
     const { error } = editingContactId
       ? await supabase
-          .from(tableName)
+          .from("contacts")
           .update(payload)
           .eq("id", editingContactId)
           .eq("company_id", companyId)
           .eq(ownerIdColumn, ownerId)
-      : await supabase.from(tableName).insert({
+      : await supabase.from("contacts").insert({
           ...payload,
+          active: true,
           company_id: companyId,
-          [ownerIdColumn]: ownerId,
         });
 
     setIsSaving(false);
@@ -174,7 +160,7 @@ export function ContactosSection({
   function startEditing(contact: ContactRecord) {
     setEditingContactId(contact.id);
     setForm({
-      department: contact.department ?? "",
+      organization_area: contact.organization_area ?? "",
       contact_name: contact.contact_name ?? "",
       position: contact.position ?? "",
       phone: contact.phone ?? "",
@@ -209,7 +195,7 @@ export function ContactosSection({
     setErrorMessage("");
 
     const { error } = await supabase
-      .from(tableName)
+      .from("contacts")
       .delete()
       .eq("id", contact.id)
       .eq("company_id", companyId)
@@ -268,41 +254,39 @@ export function ContactosSection({
             </p>
           </div>
 
-          {includeDepartment ? (
-            <div className="space-y-2">
-              <label
-                className="text-sm font-medium text-stone-800"
-                htmlFor={`${tableName}-department`}
-              >
-                Departamento
-              </label>
-              <input
-                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                disabled={isLoading || isSaving}
-                id={`${tableName}-department`}
-                onChange={(event) =>
-                  setForm((currentForm) => ({
-                    ...currentForm,
-                    department: event.target.value,
-                  }))
-                }
-                type="text"
-                value={form.department}
-              />
-            </div>
-          ) : null}
+          <div className="space-y-2">
+            <label
+              className="text-sm font-medium text-stone-800"
+              htmlFor={`${ownerIdColumn}-organization-area`}
+            >
+              Área
+            </label>
+            <input
+              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+              disabled={isLoading || isSaving}
+              id={`${ownerIdColumn}-organization-area`}
+              onChange={(event) =>
+                setForm((currentForm) => ({
+                  ...currentForm,
+                  organization_area: event.target.value,
+                }))
+              }
+              type="text"
+              value={form.organization_area}
+            />
+          </div>
 
           <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
-              htmlFor={`${tableName}-contact-name`}
+              htmlFor={`${ownerIdColumn}-contact-name`}
             >
               Nombre del contacto
             </label>
             <input
               className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
               disabled={isLoading || isSaving}
-              id={`${tableName}-contact-name`}
+              id={`${ownerIdColumn}-contact-name`}
               onChange={(event) =>
                 setForm((currentForm) => ({
                   ...currentForm,
@@ -319,14 +303,14 @@ export function ContactosSection({
             <div className="space-y-2">
               <label
                 className="text-sm font-medium text-stone-800"
-                htmlFor={`${tableName}-position`}
+                htmlFor={`${ownerIdColumn}-position`}
               >
                 Puesto
               </label>
               <input
                 className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
                 disabled={isLoading || isSaving}
-                id={`${tableName}-position`}
+                id={`${ownerIdColumn}-position`}
                 onChange={(event) =>
                   setForm((currentForm) => ({
                     ...currentForm,
@@ -341,14 +325,14 @@ export function ContactosSection({
             <div className="space-y-2">
               <label
                 className="text-sm font-medium text-stone-800"
-                htmlFor={`${tableName}-phone`}
+                htmlFor={`${ownerIdColumn}-phone`}
               >
                 Teléfono
               </label>
               <input
                 className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
                 disabled={isLoading || isSaving}
-                id={`${tableName}-phone`}
+                id={`${ownerIdColumn}-phone`}
                 onChange={(event) =>
                   setForm((currentForm) => ({
                     ...currentForm,
@@ -363,14 +347,14 @@ export function ContactosSection({
             <div className="space-y-2">
               <label
                 className="text-sm font-medium text-stone-800"
-                htmlFor={`${tableName}-whatsapp`}
+                htmlFor={`${ownerIdColumn}-whatsapp`}
               >
                 WhatsApp
               </label>
               <input
                 className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
                 disabled={isLoading || isSaving}
-                id={`${tableName}-whatsapp`}
+                id={`${ownerIdColumn}-whatsapp`}
                 onChange={(event) =>
                   setForm((currentForm) => ({
                     ...currentForm,
@@ -385,14 +369,14 @@ export function ContactosSection({
             <div className="space-y-2">
               <label
                 className="text-sm font-medium text-stone-800"
-                htmlFor={`${tableName}-email`}
+                htmlFor={`${ownerIdColumn}-email`}
               >
                 Correo
               </label>
               <input
                 className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
                 disabled={isLoading || isSaving}
-                id={`${tableName}-email`}
+                id={`${ownerIdColumn}-email`}
                 onChange={(event) =>
                   setForm((currentForm) => ({
                     ...currentForm,
@@ -408,14 +392,14 @@ export function ContactosSection({
           <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
-              htmlFor={`${tableName}-notes`}
+              htmlFor={`${ownerIdColumn}-notes`}
             >
               Notas
             </label>
             <textarea
               className="min-h-24 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
               disabled={isLoading || isSaving}
-              id={`${tableName}-notes`}
+              id={`${ownerIdColumn}-notes`}
               onChange={(event) =>
                 setForm((currentForm) => ({
                   ...currentForm,
@@ -465,9 +449,7 @@ export function ContactosSection({
               <table className="min-w-full divide-y divide-stone-200 text-left text-sm">
                 <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
                   <tr>
-                    {includeDepartment ? (
-                      <th className="px-4 py-3">Departamento</th>
-                    ) : null}
+                    <th className="px-4 py-3">Área</th>
                     <th className="px-4 py-3">Contacto</th>
                     <th className="px-4 py-3">Teléfono</th>
                     <th className="px-4 py-3">WhatsApp</th>
@@ -479,11 +461,9 @@ export function ContactosSection({
                 <tbody className="divide-y divide-stone-200 bg-white">
                   {contacts.map((contact) => (
                     <tr key={contact.id}>
-                      {includeDepartment ? (
-                        <td className="px-4 py-3 text-stone-700">
-                          {contact.department || "Sin departamento"}
-                        </td>
-                      ) : null}
+                      <td className="px-4 py-3 text-stone-700">
+                        {contact.organization_area || "Sin área"}
+                      </td>
                       <td className="px-4 py-3 text-stone-700">
                         <div className="space-y-1">
                           <p className="font-medium text-stone-950">

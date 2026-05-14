@@ -12,19 +12,16 @@ type ClientRecord = {
 type ContactRecord = {
   id: string;
   client_id: string | null;
-  name?: string | null;
-  full_name?: string | null;
   contact_name?: string | null;
-  department?: string | null;
-  dependencia?: string | null;
-  area?: string | null;
+  organization_area?: string | null;
+  position?: string | null;
 };
 
 type RequestRecord = {
   id: string;
   folio: string | null;
   client_id: string | null;
-  contact_id: string | null;
+  contact_ref_id: string | null;
   description?: string | null;
 };
 
@@ -33,7 +30,7 @@ type QuotationRecord = {
   folio: string | null;
   request_id: string | null;
   client_id: string | null;
-  contact_id: string | null;
+  contact_ref_id: string | null;
   quoted_at: string | null;
   valid_until: string | null;
   status: string | null;
@@ -48,7 +45,7 @@ type QuotationLineRecord = {
 type QuotationFormState = {
   request_id: string;
   client_id: string;
-  contact_id: string;
+  contact_ref_id: string;
   quoted_at: string;
   valid_until: string;
   status: string;
@@ -70,7 +67,7 @@ function emptyForm(): QuotationFormState {
   return {
     request_id: "",
     client_id: "",
-    contact_id: "",
+    contact_ref_id: "",
     quoted_at: todayDate(),
     valid_until: "",
     status: "borrador",
@@ -112,12 +109,30 @@ function contactLabel(contact: ContactRecord | undefined) {
     return "Sin contacto";
   }
 
-  const name =
-    contact.name ?? contact.full_name ?? contact.contact_name ?? "Sin nombre";
-  const dependency =
-    contact.dependencia ?? contact.department ?? contact.area ?? null;
+  const name = contact.contact_name ?? "Sin nombre";
+  const details = [contact.organization_area, contact.position].filter(Boolean);
 
-  return dependency ? `${dependency} - ${name}` : name;
+  return details.length > 0 ? `${name} - ${details.join(" - ")}` : name;
+}
+
+function ContactSummary({ contact }: { contact: ContactRecord | undefined }) {
+  if (!contact) {
+    return "Sin contacto";
+  }
+
+  return (
+    <div className="space-y-1">
+      <p className="font-medium text-stone-800">
+        {contact.contact_name || "Sin nombre"}
+      </p>
+      {contact.organization_area ? (
+        <p className="text-xs text-stone-500">{contact.organization_area}</p>
+      ) : null}
+      {contact.position ? (
+        <p className="text-xs text-stone-500">{contact.position}</p>
+      ) : null}
+    </div>
+  );
 }
 
 function requestLabel(request: RequestRecord) {
@@ -191,7 +206,7 @@ export function CotizacionesClient() {
       const { data, error } = await supabase
         .from("quotations")
         .select(
-          "id,folio,request_id,client_id,contact_id,quoted_at,valid_until,status",
+          "id,folio,request_id,client_id,contact_ref_id,quoted_at,valid_until,status",
         )
         .eq("company_id", activeCompanyId)
         .order("quoted_at", { ascending: false });
@@ -303,8 +318,10 @@ export function CotizacionesClient() {
 
       if (clientIds.length > 0) {
         const { data: contactsData, error: contactsError } = await supabase
-          .from("client_contacts")
-          .select("*")
+          .from("contacts")
+          .select("id,client_id,contact_name,organization_area,position")
+          .eq("company_id", activeCompanyId)
+          .eq("active", true)
           .in("client_id", clientIds);
 
         if (contactsError) {
@@ -318,7 +335,7 @@ export function CotizacionesClient() {
 
       const { data: requestsData, error: requestsError } = await supabase
         .from("client_requests")
-        .select("id,folio,client_id,contact_id,description")
+        .select("id,folio,client_id,contact_ref_id,description")
         .eq("company_id", activeCompanyId)
         .order("requested_at", { ascending: false });
 
@@ -371,7 +388,7 @@ export function CotizacionesClient() {
 
     const payload = {
       client_id: form.client_id,
-      contact_id: cleanOptionalValue(form.contact_id),
+      contact_ref_id: cleanOptionalValue(form.contact_ref_id),
       quoted_at: form.quoted_at,
       request_id: cleanOptionalValue(form.request_id),
       status: form.status,
@@ -408,7 +425,7 @@ export function CotizacionesClient() {
       ...currentForm,
       request_id: requestId,
       client_id: selectedRequest?.client_id ?? currentForm.client_id,
-      contact_id: selectedRequest?.contact_id ?? "",
+      contact_ref_id: selectedRequest?.contact_ref_id ?? "",
     }));
   }
 
@@ -418,7 +435,7 @@ export function CotizacionesClient() {
     setForm({
       request_id: quotation.request_id ?? "",
       client_id: quotation.client_id ?? "",
-      contact_id: quotation.contact_id ?? "",
+      contact_ref_id: quotation.contact_ref_id ?? "",
       quoted_at: formatDate(quotation.quoted_at),
       valid_until: quotation.valid_until ? formatDate(quotation.valid_until) : "",
       status: statusOptions.includes(quotation.status ?? "")
@@ -550,7 +567,7 @@ export function CotizacionesClient() {
                 setForm((currentForm) => ({
                   ...currentForm,
                   client_id: event.target.value,
-                  contact_id: "",
+                  contact_ref_id: "",
                   request_id: "",
                 }))
               }
@@ -569,21 +586,21 @@ export function CotizacionesClient() {
           <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
-              htmlFor="contact_id"
+              htmlFor="contact_ref_id"
             >
               Dependencia/contacto
             </label>
             <select
               className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
               disabled={isLoading || isSaving || !form.client_id}
-              id="contact_id"
+              id="contact_ref_id"
               onChange={(event) =>
                 setForm((currentForm) => ({
                   ...currentForm,
-                  contact_id: event.target.value,
+                  contact_ref_id: event.target.value,
                 }))
               }
-              value={form.contact_id}
+              value={form.contact_ref_id}
             >
               <option value="">Sin contacto</option>
               {filteredContacts.map((contact) => (
@@ -765,9 +782,13 @@ export function CotizacionesClient() {
                         : "Sin cliente"}
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {quotation.contact_id
-                        ? contactLabel(contactsById.get(quotation.contact_id))
-                        : "Sin contacto"}
+                      <ContactSummary
+                        contact={
+                          quotation.contact_ref_id
+                            ? contactsById.get(quotation.contact_ref_id)
+                            : undefined
+                        }
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
                       {formatDate(quotation.quoted_at)}

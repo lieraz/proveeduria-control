@@ -374,12 +374,10 @@ export function ClientesClient() {
         <ContactosSection
           key={selectedContactsClient.id}
           companyId={companyId}
-          includeDepartment
           ownerId={selectedContactsClient.id}
           ownerIdColumn="client_id"
           ownerLabel="cliente"
           ownerName={selectedContactsClient.name}
-          tableName="client_contacts"
           onClose={() => setSelectedContactsClient(null)}
         />
       ) : null}

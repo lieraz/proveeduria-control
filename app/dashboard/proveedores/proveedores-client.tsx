@@ -522,7 +522,6 @@ export function ProveedoresClient() {
           ownerIdColumn="supplier_id"
           ownerLabel="proveedor"
           ownerName={selectedContactsSupplier.name}
-          tableName="supplier_contacts"
           onClose={() => setSelectedContactsSupplier(null)}
         />
       ) : null}
