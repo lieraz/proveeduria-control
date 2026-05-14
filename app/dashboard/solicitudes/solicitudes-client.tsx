@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/src/lib/supabase/client";
 
@@ -42,6 +43,10 @@ type RequestFormState = {
   urgency: string;
   status: string;
   notes: string;
+};
+
+type RequestLineCountRecord = {
+  client_request_id: string | null;
 };
 
 const channelOptions = ["whatsapp", "email", "telefono", "presencial", "otro"];
@@ -161,6 +166,9 @@ export function SolicitudesClient() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [lineCountsByRequestId, setLineCountsByRequestId] = useState<
+    Map<string, number>
+  >(new Map());
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [search, setSearch] = useState("");
 
@@ -197,14 +205,46 @@ export function SolicitudesClient() {
       if (error) {
         setErrorMessage(error.message);
         setRequests([]);
+        setLineCountsByRequestId(new Map());
         return;
       }
 
-      setRequests(
-        ((data ?? []) as RequestRecord[]).filter((request) =>
+      const loadedRequests = ((data ?? []) as RequestRecord[]).filter((request) =>
           requestMatchesSearch(request, searchValue, activeClientsById),
-        ),
       );
+      setRequests(loadedRequests);
+
+      const requestIds = loadedRequests.map((request) => request.id);
+
+      if (requestIds.length === 0) {
+        setLineCountsByRequestId(new Map());
+        return;
+      }
+
+      const { data: linesData, error: linesError } = await supabase
+        .from("client_request_lines")
+        .select("client_request_id")
+        .eq("company_id", activeCompanyId)
+        .in("client_request_id", requestIds);
+
+      if (linesError) {
+        setErrorMessage(linesError.message);
+        setLineCountsByRequestId(new Map());
+        return;
+      }
+
+      const nextCounts = new Map<string, number>();
+      ((linesData ?? []) as RequestLineCountRecord[]).forEach((line) => {
+        if (!line.client_request_id) {
+          return;
+        }
+
+        nextCounts.set(
+          line.client_request_id,
+          (nextCounts.get(line.client_request_id) ?? 0) + 1,
+        );
+      });
+      setLineCountsByRequestId(nextCounts);
     },
     [supabase],
   );
@@ -783,6 +823,7 @@ export function SolicitudesClient() {
                   <th className="px-5 py-3">Canal</th>
                   <th className="px-5 py-3">Urgencia</th>
                   <th className="px-5 py-3">Estado</th>
+                  <th className="px-5 py-3">Partidas</th>
                   <th className="px-5 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -790,7 +831,12 @@ export function SolicitudesClient() {
                 {requests.map((request) => (
                   <tr key={request.id}>
                     <td className="px-5 py-4 font-medium text-stone-950">
-                      {request.folio || "Sin folio"}
+                      <Link
+                        className="text-emerald-800 hover:text-emerald-950 hover:underline"
+                        href={`/dashboard/solicitudes/${request.id}`}
+                      >
+                        {request.folio || "Sin folio"}
+                      </Link>
                     </td>
                     <td className="px-5 py-4 text-stone-700">
                       {request.client_id
@@ -834,8 +880,17 @@ export function SolicitudesClient() {
                         {request.status || "nueva"}
                       </span>
                     </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      {lineCountsByRequestId.get(request.id) ?? 0}
+                    </td>
                     <td className="px-5 py-4">
                       <div className="flex justify-end gap-2">
+                        <Link
+                          className="inline-flex h-9 items-center rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
+                          href={`/dashboard/solicitudes/${request.id}`}
+                        >
+                          Ver detalle
+                        </Link>
                         <button
                           className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
                           disabled={isSaving || isDeletingId === request.id}
