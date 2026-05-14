@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { ContactosSection } from "../contactos-section";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -42,6 +43,8 @@ export function ClientesClient() {
   const [isSaving, setIsSaving] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
   const [search, setSearch] = useState("");
+  const [selectedContactsClient, setSelectedContactsClient] =
+    useState<ClientRecord | null>(null);
 
   const loadClients = useCallback(
     async (activeCompanyId: string, searchValue: string) => {
@@ -168,6 +171,14 @@ export function ClientesClient() {
     }
 
     setEditingClientId(null);
+    setSelectedContactsClient((currentClient) =>
+      currentClient?.id === editingClientId
+        ? {
+            ...currentClient,
+            name,
+          }
+        : currentClient,
+    );
     setForm(emptyForm);
     await loadClients(companyId, search);
   }
@@ -221,6 +232,10 @@ export function ClientesClient() {
 
     if (editingClientId === client.id) {
       cancelEditing();
+    }
+
+    if (selectedContactsClient?.id === client.id) {
+      setSelectedContactsClient(null);
     }
 
     await loadClients(companyId, search);
@@ -355,6 +370,20 @@ export function ClientesClient() {
         </form>
       </section>
 
+      {selectedContactsClient ? (
+        <ContactosSection
+          key={selectedContactsClient.id}
+          companyId={companyId}
+          includeDepartment
+          ownerId={selectedContactsClient.id}
+          ownerIdColumn="client_id"
+          ownerLabel="cliente"
+          ownerName={selectedContactsClient.name}
+          tableName="client_contacts"
+          onClose={() => setSelectedContactsClient(null)}
+        />
+      ) : null}
+
       <section className="rounded-lg border border-stone-200 bg-white shadow-sm">
         <div className="border-b border-stone-200 p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
@@ -435,7 +464,15 @@ export function ClientesClient() {
                       </span>
                     </td>
                     <td className="px-5 py-4">
-                      <div className="flex justify-end gap-2">
+                      <div className="flex flex-wrap justify-end gap-2">
+                        <button
+                          className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={isSaving || isDeletingId === client.id}
+                          onClick={() => setSelectedContactsClient(client)}
+                          type="button"
+                        >
+                          Ver contactos
+                        </button>
                         <button
                           className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
                           disabled={isSaving || isDeletingId === client.id}

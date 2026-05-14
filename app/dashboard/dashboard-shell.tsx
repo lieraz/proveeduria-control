@@ -11,6 +11,7 @@ const navigation = [
   { label: "Panel", href: "/dashboard" },
   { label: "Clientes", href: "/dashboard/clientes" },
   { label: "Proveedores", href: "/dashboard/proveedores" },
+  { label: "Contactos", href: "/dashboard/contactos" },
   { label: "Productos", href: "/dashboard/productos" },
   { label: "Solicitudes", href: "/dashboard/solicitudes" },
   { label: "Cotizaciones", href: "/dashboard/cotizaciones" },

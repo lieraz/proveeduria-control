@@ -1,40 +1,48 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { ContactosSection } from "../contactos-section";
 import { createClient } from "@/src/lib/supabase/client";
 
-type SupplierRecord = {
+type RelatedRecord = {
   id: string;
   name: string;
-  rfc: string | null;
-  contact_name: string | null;
-  phone: string | null;
-  email: string | null;
-  categories: string[] | null;
-  payment_terms: string | null;
-  notes: string | null;
 };
 
-type SupplierFormState = {
-  name: string;
-  rfc: string;
+type ContactRecord = {
+  id: string;
   contact_name: string;
+  organization_area: string | null;
+  position: string | null;
+  phone: string | null;
+  whatsapp: string | null;
+  email: string | null;
+  client_id: string | null;
+  supplier_id: string | null;
+  notes: string | null;
+  active: boolean;
+};
+
+type ContactFormState = {
+  contact_name: string;
+  organization_area: string;
+  position: string;
   phone: string;
+  whatsapp: string;
   email: string;
-  categories: string;
-  payment_terms: string;
+  client_id: string;
+  supplier_id: string;
   notes: string;
 };
 
-const emptyForm: SupplierFormState = {
-  name: "",
-  rfc: "",
+const emptyForm: ContactFormState = {
   contact_name: "",
+  organization_area: "",
+  position: "",
   phone: "",
+  whatsapp: "",
   email: "",
-  categories: "",
-  payment_terms: "",
+  client_id: "",
+  supplier_id: "",
   notes: "",
 };
 
@@ -43,80 +51,106 @@ function cleanOptionalValue(value: string) {
   return trimmedValue.length > 0 ? trimmedValue : null;
 }
 
-function parseCategories(value: string) {
-  const categories = value
-    .split(",")
-    .map((category) => category.trim())
-    .filter(Boolean);
-
-  return categories.length > 0 ? categories : null;
+function normalizeValue(value: string | null | undefined) {
+  return value?.toLowerCase() ?? "";
 }
 
-function formatCategories(categories: string[] | null) {
-  return categories?.join(", ") ?? "";
-}
-
-function categoryLabel(categories: string[] | null) {
-  return categories && categories.length > 0
-    ? categories.join(", ")
-    : "Sin categorías";
-}
-
-function supplierMatchesSearch(supplier: SupplierRecord, searchValue: string) {
+function contactMatchesSearch(
+  contact: ContactRecord,
+  searchValue: string,
+  clientsById: Map<string, string>,
+  suppliersById: Map<string, string>,
+) {
   const normalizedSearch = searchValue.trim().toLowerCase();
 
   if (!normalizedSearch) {
     return true;
   }
 
+  const clientName = contact.client_id
+    ? clientsById.get(contact.client_id)
+    : null;
+  const supplierName = contact.supplier_id
+    ? suppliersById.get(contact.supplier_id)
+    : null;
+
   return [
-    supplier.name,
-    supplier.contact_name,
-    supplier.rfc,
-    ...(supplier.categories ?? []),
-  ].some((value) => value?.toLowerCase().includes(normalizedSearch));
+    contact.contact_name,
+    contact.organization_area,
+    contact.position,
+    contact.phone,
+    contact.whatsapp,
+    contact.email,
+    clientName,
+    supplierName,
+  ].some((value) => normalizeValue(value).includes(normalizedSearch));
 }
 
-export function ProveedoresClient() {
+function relatedLabel(id: string | null, recordsById: Map<string, string>) {
+  if (!id) {
+    return "Sin asignar";
+  }
+
+  return recordsById.get(id) ?? "No disponible";
+}
+
+export function ContactosClient() {
   const supabase = useMemo(() => createClient(), []);
-  const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
+  const [clients, setClients] = useState<RelatedRecord[]>([]);
   const [companyId, setCompanyId] = useState<string | null>(null);
-  const [editingSupplierId, setEditingSupplierId] = useState<string | null>(
-    null,
-  );
+  const [contacts, setContacts] = useState<ContactRecord[]>([]);
+  const [editingContactId, setEditingContactId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
-  const [form, setForm] = useState<SupplierFormState>(emptyForm);
-  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
+  const [form, setForm] = useState<ContactFormState>(emptyForm);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isUpdatingStatusId, setIsUpdatingStatusId] = useState<string | null>(
+    null,
+  );
   const [search, setSearch] = useState("");
-  const [selectedContactsSupplier, setSelectedContactsSupplier] =
-    useState<SupplierRecord | null>(null);
+  const [suppliers, setSuppliers] = useState<RelatedRecord[]>([]);
 
-  const loadSuppliers = useCallback(
-    async (activeCompanyId: string, searchValue: string) => {
+  const clientsById = useMemo(
+    () => new Map(clients.map((client) => [client.id, client.name])),
+    [clients],
+  );
+  const suppliersById = useMemo(
+    () => new Map(suppliers.map((supplier) => [supplier.id, supplier.name])),
+    [suppliers],
+  );
+
+  const loadContacts = useCallback(
+    async (
+      activeCompanyId: string,
+      searchValue: string,
+      currentClientsById: Map<string, string>,
+      currentSuppliersById: Map<string, string>,
+    ) => {
       setErrorMessage("");
 
-      const query = supabase
-        .from("suppliers")
+      const { data, error } = await supabase
+        .from("contacts")
         .select(
-          "id,name,rfc,contact_name,phone,email,categories,payment_terms,notes",
+          "id,contact_name,organization_area,position,phone,whatsapp,email,client_id,supplier_id,notes,active",
         )
         .eq("company_id", activeCompanyId)
-        .order("name", { ascending: true });
-
-      const { data, error } = await query;
+        .order("contact_name", { ascending: true });
 
       if (error) {
         setErrorMessage(error.message);
-        setSuppliers([]);
+        setContacts([]);
         return;
       }
 
-      setSuppliers(
-        (data ?? []).filter((supplier) =>
-          supplierMatchesSearch(supplier, searchValue),
+      setContacts(
+        ((data ?? []) as ContactRecord[]).filter((contact) =>
+          contactMatchesSearch(
+            contact,
+            searchValue,
+            currentClientsById,
+            currentSuppliersById,
+          ),
         ),
       );
     },
@@ -157,13 +191,51 @@ export function ProveedoresClient() {
         return;
       }
 
-      setCompanyId(profile.company_id);
-      await loadSuppliers(profile.company_id, "");
+      const activeCompanyId = profile.company_id as string;
+
+      const [clientsResult, suppliersResult] = await Promise.all([
+        supabase
+          .from("clients")
+          .select("id,name")
+          .eq("company_id", activeCompanyId)
+          .order("name", { ascending: true }),
+        supabase
+          .from("suppliers")
+          .select("id,name")
+          .eq("company_id", activeCompanyId)
+          .order("name", { ascending: true }),
+      ]);
+
+      if (clientsResult.error) {
+        setErrorMessage(clientsResult.error.message);
+        setIsLoading(false);
+        return;
+      }
+
+      if (suppliersResult.error) {
+        setErrorMessage(suppliersResult.error.message);
+        setIsLoading(false);
+        return;
+      }
+
+      const loadedClients = (clientsResult.data ?? []) as RelatedRecord[];
+      const loadedSuppliers = (suppliersResult.data ?? []) as RelatedRecord[];
+      const loadedClientsById = new Map(
+        loadedClients.map((client) => [client.id, client.name]),
+      );
+      const loadedSuppliersById = new Map(
+        loadedSuppliers.map((supplier) => [supplier.id, supplier.name]),
+      );
+
+      setCompanyId(activeCompanyId);
+      setClients(loadedClients);
+      setSuppliers(loadedSuppliers);
+      await loadContacts(activeCompanyId, "", loadedClientsById, loadedSuppliersById);
       setIsLoading(false);
     }
 
     loadInitialData();
-  }, [loadSuppliers, supabase]);
+  }, [loadContacts, supabase]);
 
   async function handleSearch(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -173,7 +245,7 @@ export function ProveedoresClient() {
     }
 
     setIsSearching(true);
-    await loadSuppliers(companyId, search);
+    await loadContacts(companyId, search, clientsById, suppliersById);
     setIsSearching(false);
   }
 
@@ -185,10 +257,15 @@ export function ProveedoresClient() {
       return;
     }
 
-    const name = form.name.trim();
+    const contactName = form.contact_name.trim();
 
-    if (!name) {
-      setErrorMessage("El nombre del proveedor es obligatorio.");
+    if (!contactName) {
+      setErrorMessage("El nombre del contacto es obligatorio.");
+      return;
+    }
+
+    if (!form.client_id && !form.supplier_id) {
+      setErrorMessage("Selecciona al menos un cliente o un proveedor.");
       return;
     }
 
@@ -196,25 +273,26 @@ export function ProveedoresClient() {
     setErrorMessage("");
 
     const payload = {
-      name,
-      rfc: cleanOptionalValue(form.rfc),
-      contact_name: cleanOptionalValue(form.contact_name),
+      contact_name: contactName,
+      organization_area: cleanOptionalValue(form.organization_area),
+      position: cleanOptionalValue(form.position),
       phone: cleanOptionalValue(form.phone),
+      whatsapp: cleanOptionalValue(form.whatsapp),
       email: cleanOptionalValue(form.email),
-      categories: parseCategories(form.categories),
-      payment_terms: cleanOptionalValue(form.payment_terms),
+      client_id: form.client_id || null,
+      supplier_id: form.supplier_id || null,
       notes: cleanOptionalValue(form.notes),
     };
 
-    const { error } = editingSupplierId
+    const { error } = editingContactId
       ? await supabase
-          .from("suppliers")
+          .from("contacts")
           .update(payload)
-          .eq("id", editingSupplierId)
+          .eq("id", editingContactId)
           .eq("company_id", companyId)
       : await supabase
-          .from("suppliers")
-          .insert({ ...payload, company_id: companyId });
+          .from("contacts")
+          .insert({ ...payload, active: true, company_id: companyId });
 
     setIsSaving(false);
 
@@ -223,79 +301,66 @@ export function ProveedoresClient() {
       return;
     }
 
-    setEditingSupplierId(null);
-    setSelectedContactsSupplier((currentSupplier) =>
-      currentSupplier?.id === editingSupplierId
-        ? {
-            ...currentSupplier,
-            name,
-          }
-        : currentSupplier,
-    );
+    setEditingContactId(null);
     setForm(emptyForm);
-    await loadSuppliers(companyId, search);
+    await loadContacts(companyId, search, clientsById, suppliersById);
   }
 
-  function startEditing(supplier: SupplierRecord) {
-    setEditingSupplierId(supplier.id);
+  function startEditing(contact: ContactRecord) {
+    setEditingContactId(contact.id);
     setForm({
-      name: supplier.name,
-      rfc: supplier.rfc ?? "",
-      contact_name: supplier.contact_name ?? "",
-      phone: supplier.phone ?? "",
-      email: supplier.email ?? "",
-      categories: formatCategories(supplier.categories),
-      payment_terms: supplier.payment_terms ?? "",
-      notes: supplier.notes ?? "",
+      contact_name: contact.contact_name,
+      organization_area: contact.organization_area ?? "",
+      position: contact.position ?? "",
+      phone: contact.phone ?? "",
+      whatsapp: contact.whatsapp ?? "",
+      email: contact.email ?? "",
+      client_id: contact.client_id ?? "",
+      supplier_id: contact.supplier_id ?? "",
+      notes: contact.notes ?? "",
     });
     setErrorMessage("");
   }
 
   function cancelEditing() {
-    setEditingSupplierId(null);
+    setEditingContactId(null);
     setForm(emptyForm);
     setErrorMessage("");
   }
 
-  async function deleteSupplier(supplier: SupplierRecord) {
+  async function toggleContactStatus(contact: ContactRecord) {
     if (!companyId) {
       setErrorMessage("No se encontró la empresa del usuario.");
       return;
     }
 
-    const shouldDelete = window.confirm(
-      `¿Eliminar el proveedor "${supplier.name}"? Esta acción no se puede deshacer.`,
+    const nextActiveStatus = !contact.active;
+    const actionLabel = nextActiveStatus ? "reactivar" : "desactivar";
+    const shouldContinue = window.confirm(
+      `¿Quieres ${actionLabel} el contacto "${contact.contact_name}"?`,
     );
 
-    if (!shouldDelete) {
+    if (!shouldContinue) {
       return;
     }
 
-    setIsDeletingId(supplier.id);
+    setIsUpdatingStatusId(contact.id);
     setErrorMessage("");
 
     const { error } = await supabase
-      .from("suppliers")
-      .delete()
-      .eq("id", supplier.id)
+      .from("contacts")
+      .update({ active: nextActiveStatus })
+      .eq("id", contact.id)
       .eq("company_id", companyId);
 
-    setIsDeletingId(null);
+    setIsUpdatingStatusId(null);
 
     if (error) {
       setErrorMessage(error.message);
       return;
     }
 
-    if (editingSupplierId === supplier.id) {
-      cancelEditing();
-    }
-
-    if (selectedContactsSupplier?.id === supplier.id) {
-      setSelectedContactsSupplier(null);
-    }
-
-    await loadSuppliers(companyId, search);
+    await loadContacts(companyId, search, clientsById, suppliersById);
   }
 
   return (
@@ -304,14 +369,14 @@ export function ProveedoresClient() {
         <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h3 className="text-lg font-semibold text-stone-950">
-              {editingSupplierId ? "Editar proveedor" : "Nuevo proveedor"}
+              {editingContactId ? "Editar contacto" : "Nuevo contacto"}
             </h3>
             <p className="mt-1 text-sm text-stone-600">
-              Los proveedores se guardan automáticamente en la empresa de tu
+              Los contactos se guardan automáticamente en la empresa de tu
               perfil.
             </p>
           </div>
-          {editingSupplierId ? (
+          {editingContactId ? (
             <button
               className="h-10 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
               disabled={isSaving}
@@ -325,52 +390,11 @@ export function ProveedoresClient() {
 
         <form className="grid gap-4 lg:grid-cols-2" onSubmit={handleSubmit}>
           <div className="space-y-2">
-            <label className="text-sm font-medium text-stone-800" htmlFor="name">
-              Nombre
-            </label>
-            <input
-              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-              disabled={isLoading || isSaving}
-              id="name"
-              name="name"
-              onChange={(event) =>
-                setForm((currentForm) => ({
-                  ...currentForm,
-                  name: event.target.value,
-                }))
-              }
-              required
-              type="text"
-              value={form.name}
-            />
-          </div>
-
-          <div className="space-y-2">
-            <label className="text-sm font-medium text-stone-800" htmlFor="rfc">
-              RFC
-            </label>
-            <input
-              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm uppercase text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-              disabled={isLoading || isSaving}
-              id="rfc"
-              name="rfc"
-              onChange={(event) =>
-                setForm((currentForm) => ({
-                  ...currentForm,
-                  rfc: event.target.value.toUpperCase(),
-                }))
-              }
-              type="text"
-              value={form.rfc}
-            />
-          </div>
-
-          <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
               htmlFor="contact_name"
             >
-              Contacto
+              Nombre del contacto
             </label>
             <input
               className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
@@ -383,8 +407,55 @@ export function ProveedoresClient() {
                   contact_name: event.target.value,
                 }))
               }
+              required
               type="text"
               value={form.contact_name}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label
+              className="text-sm font-medium text-stone-800"
+              htmlFor="organization_area"
+            >
+              Área
+            </label>
+            <input
+              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+              disabled={isLoading || isSaving}
+              id="organization_area"
+              name="organization_area"
+              onChange={(event) =>
+                setForm((currentForm) => ({
+                  ...currentForm,
+                  organization_area: event.target.value,
+                }))
+              }
+              type="text"
+              value={form.organization_area}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label
+              className="text-sm font-medium text-stone-800"
+              htmlFor="position"
+            >
+              Puesto
+            </label>
+            <input
+              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+              disabled={isLoading || isSaving}
+              id="position"
+              name="position"
+              onChange={(event) =>
+                setForm((currentForm) => ({
+                  ...currentForm,
+                  position: event.target.value,
+                }))
+              }
+              type="text"
+              value={form.position}
             />
           </div>
 
@@ -405,6 +476,29 @@ export function ProveedoresClient() {
               }
               type="tel"
               value={form.phone}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label
+              className="text-sm font-medium text-stone-800"
+              htmlFor="whatsapp"
+            >
+              WhatsApp
+            </label>
+            <input
+              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+              disabled={isLoading || isSaving}
+              id="whatsapp"
+              name="whatsapp"
+              onChange={(event) =>
+                setForm((currentForm) => ({
+                  ...currentForm,
+                  whatsapp: event.target.value,
+                }))
+              }
+              type="tel"
+              value={form.whatsapp}
             />
           </div>
 
@@ -431,56 +525,63 @@ export function ProveedoresClient() {
           <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
-              htmlFor="categories"
+              htmlFor="client_id"
             >
-              Categorías
+              Cliente
             </label>
-            <input
+            <select
               className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
               disabled={isLoading || isSaving}
-              id="categories"
-              name="categories"
+              id="client_id"
+              name="client_id"
               onChange={(event) =>
                 setForm((currentForm) => ({
                   ...currentForm,
-                  categories: event.target.value,
+                  client_id: event.target.value,
                 }))
               }
-              placeholder="Ej. papelería, limpieza, ferretería"
-              type="text"
-              value={form.categories}
-            />
+              value={form.client_id}
+            >
+              <option value="">Sin cliente</option>
+              {clients.map((client) => (
+                <option key={client.id} value={client.id}>
+                  {client.name}
+                </option>
+              ))}
+            </select>
           </div>
 
-          <div className="space-y-2 lg:col-span-2">
+          <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
-              htmlFor="payment_terms"
+              htmlFor="supplier_id"
             >
-              Términos de pago
+              Proveedor
             </label>
-            <input
+            <select
               className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
               disabled={isLoading || isSaving}
-              id="payment_terms"
-              name="payment_terms"
+              id="supplier_id"
+              name="supplier_id"
               onChange={(event) =>
                 setForm((currentForm) => ({
                   ...currentForm,
-                  payment_terms: event.target.value,
+                  supplier_id: event.target.value,
                 }))
               }
-              placeholder="Ej. 30 días, contado, anticipo 50%"
-              type="text"
-              value={form.payment_terms}
-            />
+              value={form.supplier_id}
+            >
+              <option value="">Sin proveedor</option>
+              {suppliers.map((supplier) => (
+                <option key={supplier.id} value={supplier.id}>
+                  {supplier.name}
+                </option>
+              ))}
+            </select>
           </div>
 
           <div className="space-y-2 lg:col-span-2">
-            <label
-              className="text-sm font-medium text-stone-800"
-              htmlFor="notes"
-            >
+            <label className="text-sm font-medium text-stone-800" htmlFor="notes">
               Notas
             </label>
             <textarea
@@ -506,49 +607,37 @@ export function ProveedoresClient() {
             >
               {isSaving
                 ? "Guardando..."
-                : editingSupplierId
+                : editingContactId
                   ? "Guardar cambios"
-                  : "Crear proveedor"}
+                  : "Crear contacto"}
             </button>
           </div>
         </form>
       </section>
-
-      {selectedContactsSupplier ? (
-        <ContactosSection
-          key={selectedContactsSupplier.id}
-          companyId={companyId}
-          ownerId={selectedContactsSupplier.id}
-          ownerIdColumn="supplier_id"
-          ownerLabel="proveedor"
-          ownerName={selectedContactsSupplier.name}
-          tableName="supplier_contacts"
-          onClose={() => setSelectedContactsSupplier(null)}
-        />
-      ) : null}
 
       <section className="rounded-lg border border-stone-200 bg-white shadow-sm">
         <div className="border-b border-stone-200 p-5">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <h3 className="text-lg font-semibold text-stone-950">
-                Proveedores registrados
+                Contactos registrados
               </h3>
               <p className="mt-1 text-sm text-stone-600">
-                Busca por nombre, contacto, categoría o RFC.
+                Busca por contacto, área, puesto, teléfono, correo, cliente o
+                proveedor.
               </p>
             </div>
 
             <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
-              <label className="sr-only" htmlFor="supplier-search">
-                Buscar proveedor
+              <label className="sr-only" htmlFor="contact-search">
+                Buscar contacto
               </label>
               <input
-                className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-72"
+                className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-80"
                 disabled={isLoading || isSearching}
-                id="supplier-search"
+                id="contact-search"
                 onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar proveedores"
+                placeholder="Buscar contactos"
                 type="search"
                 value={search}
               />
@@ -571,77 +660,96 @@ export function ProveedoresClient() {
 
         {isLoading ? (
           <div className="p-5 text-sm font-medium text-stone-600">
-            Cargando proveedores...
+            Cargando contactos...
           </div>
-        ) : suppliers.length === 0 ? (
+        ) : contacts.length === 0 ? (
           <div className="p-5 text-sm text-stone-600">
-            No hay proveedores para mostrar.
+            No hay contactos para mostrar.
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-stone-200 text-left text-sm">
               <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
                 <tr>
-                  <th className="px-5 py-3">Nombre</th>
-                  <th className="px-5 py-3">RFC</th>
                   <th className="px-5 py-3">Contacto</th>
-                  <th className="px-5 py-3">Categorías</th>
-                  <th className="px-5 py-3">Términos</th>
+                  <th className="px-5 py-3">Área</th>
+                  <th className="px-5 py-3">Puesto</th>
+                  <th className="px-5 py-3">Teléfono</th>
+                  <th className="px-5 py-3">WhatsApp</th>
+                  <th className="px-5 py-3">Correo</th>
+                  <th className="px-5 py-3">Cliente</th>
+                  <th className="px-5 py-3">Proveedor</th>
+                  <th className="px-5 py-3">Estado</th>
                   <th className="px-5 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-200 bg-white">
-                {suppliers.map((supplier) => (
-                  <tr key={supplier.id}>
+                {contacts.map((contact) => (
+                  <tr key={contact.id}>
                     <td className="px-5 py-4 font-medium text-stone-950">
-                      {supplier.name}
+                      {contact.contact_name}
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {supplier.rfc || "Sin RFC"}
+                      {contact.organization_area || "Sin área"}
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      <div className="space-y-1">
-                        <p>{supplier.contact_name || "Sin contacto"}</p>
-                        <p className="text-xs text-stone-500">
-                          {supplier.email || supplier.phone || "Sin datos"}
-                        </p>
-                      </div>
-                    </td>
-                    <td className="max-w-xs px-5 py-4 text-stone-700">
-                      <span className="line-clamp-2">
-                        {categoryLabel(supplier.categories)}
-                      </span>
+                      {contact.position || "Sin puesto"}
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {supplier.payment_terms || "Sin términos"}
+                      {contact.phone || "Sin teléfono"}
+                    </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      {contact.whatsapp || "Sin WhatsApp"}
+                    </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      {contact.email || "Sin correo"}
+                    </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      {relatedLabel(contact.client_id, clientsById)}
+                    </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      {relatedLabel(contact.supplier_id, suppliersById)}
                     </td>
                     <td className="px-5 py-4">
-                      <div className="flex flex-wrap justify-end gap-2">
-                        <button
-                          className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={isSaving || isDeletingId === supplier.id}
-                          onClick={() => setSelectedContactsSupplier(supplier)}
-                          type="button"
-                        >
-                          Ver contactos
-                        </button>
+                      <span
+                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                          contact.active
+                            ? "bg-emerald-50 text-emerald-800"
+                            : "bg-stone-100 text-stone-600"
+                        }`}
+                      >
+                        {contact.active ? "Activo" : "Inactivo"}
+                      </span>
+                    </td>
+                    <td className="px-5 py-4">
+                      <div className="flex justify-end gap-2">
                         <button
                           className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={isSaving || isDeletingId === supplier.id}
-                          onClick={() => startEditing(supplier)}
+                          disabled={
+                            isSaving || isUpdatingStatusId === contact.id
+                          }
+                          onClick={() => startEditing(contact)}
                           type="button"
                         >
                           Editar
                         </button>
                         <button
-                          className="h-9 rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={isSaving || isDeletingId === supplier.id}
-                          onClick={() => deleteSupplier(supplier)}
+                          className={`h-9 rounded-md border px-3 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                            contact.active
+                              ? "border-amber-200 text-amber-700 hover:border-amber-300 hover:bg-amber-50"
+                              : "border-emerald-200 text-emerald-700 hover:border-emerald-300 hover:bg-emerald-50"
+                          }`}
+                          disabled={
+                            isSaving || isUpdatingStatusId === contact.id
+                          }
+                          onClick={() => toggleContactStatus(contact)}
                           type="button"
                         >
-                          {isDeletingId === supplier.id
-                            ? "Eliminando..."
-                            : "Eliminar"}
+                          {isUpdatingStatusId === contact.id
+                            ? "Actualizando..."
+                            : contact.active
+                              ? "Desactivar"
+                              : "Reactivar"}
                         </button>
                       </div>
                     </td>
