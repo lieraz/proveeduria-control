@@ -123,10 +123,13 @@ function formatMoney(value: number | string | null | undefined) {
 }
 
 function formatPercent(value: number | string | null | undefined) {
+  const numericValue = toNumber(value);
+  const percentValue = Math.abs(numericValue) > 1 ? numericValue / 100 : numericValue;
+
   return new Intl.NumberFormat("es-MX", {
     maximumFractionDigits: 2,
     style: "percent",
-  }).format(toNumber(value));
+  }).format(percentValue);
 }
 
 function contactLabel(contact: ContactRecord | undefined) {

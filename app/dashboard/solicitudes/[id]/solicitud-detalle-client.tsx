@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import {
   Fragment,
   FormEvent,
@@ -123,6 +124,8 @@ const emptyOfferForm: OfferFormState = {
   notes: "",
 };
 
+const defaultTargetMargin = "20";
+
 function cleanOptionalValue(value: string) {
   const trimmedValue = value.trim();
   return trimmedValue.length > 0 ? trimmedValue : null;
@@ -140,6 +143,20 @@ function toNumber(value: number | string | null | undefined) {
 
   const parsedValue = Number(value);
   return Number.isFinite(parsedValue) ? parsedValue : 0;
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function todayDate() {
+  return new Date().toISOString().slice(0, 10);
+}
+
+function addDays(date: Date, days: number) {
+  const nextDate = new Date(date);
+  nextDate.setDate(nextDate.getDate() + days);
+  return nextDate.toISOString().slice(0, 10);
 }
 
 function formatDate(value: string | null) {
@@ -191,6 +208,7 @@ function contactLabel(contact: ContactRecord | undefined) {
 export function SolicitudDetalleClient({
   requestId,
 }: SolicitudDetalleClientProps) {
+  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [companyId, setCompanyId] = useState<string | null>(null);
@@ -206,6 +224,7 @@ export function SolicitudDetalleClient({
     null,
   );
   const [isLoading, setIsLoading] = useState(true);
+  const [isGeneratingQuotation, setIsGeneratingQuotation] = useState(false);
   const [isSavingOffer, setIsSavingOffer] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSelectingOfferId, setIsSelectingOfferId] = useState<string | null>(
@@ -216,6 +235,8 @@ export function SolicitudDetalleClient({
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [request, setRequest] = useState<RequestRecord | null>(null);
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
+  const [targetMargin, setTargetMargin] = useState(defaultTargetMargin);
+  const [warningMessage, setWarningMessage] = useState("");
 
   const clientsById = useMemo(
     () => new Map(clients.map((client) => [client.id, client])),
@@ -805,6 +826,179 @@ export function SolicitudDetalleClient({
     await loadLines(companyId);
   }
 
+  async function generateQuotation() {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    if (!request) {
+      setErrorMessage("No se encontró la solicitud.");
+      return;
+    }
+
+    if (!request.client_id) {
+      setErrorMessage("La solicitud no tiene cliente asignado.");
+      return;
+    }
+
+    if (lines.length === 0) {
+      setErrorMessage("La solicitud no tiene partidas para cotizar.");
+      return;
+    }
+
+    const selectedOffersByLineId = new Map<string, SupplierOfferRecord>();
+    offers.forEach((offer) => {
+      if (offer.client_request_line_id && offer.is_selected) {
+        selectedOffersByLineId.set(offer.client_request_line_id, offer);
+      }
+    });
+
+    const missingLines = lines.filter(
+      (line) => !selectedOffersByLineId.has(line.id),
+    );
+
+    if (missingLines.length > 0) {
+      setWarningMessage(
+        `Selecciona una oferta de proveedor para: ${missingLines
+          .map((line) => lineDescription(line))
+          .join(", ")}.`,
+      );
+      setErrorMessage("");
+      return;
+    }
+
+    const parsedTargetMargin = Number(targetMargin);
+
+    if (
+      !Number.isFinite(parsedTargetMargin) ||
+      parsedTargetMargin < 0 ||
+      parsedTargetMargin >= 100
+    ) {
+      setErrorMessage("El margen objetivo debe ser mayor o igual a 0 y menor a 100.");
+      setWarningMessage("");
+      return;
+    }
+
+    const invalidLine = lines.find((line) => {
+      const selectedOffer = selectedOffersByLineId.get(line.id);
+      return (
+        !selectedOffer ||
+        !selectedOffer.supplier_id ||
+        toNumber(selectedOffer.unit_price) <= 0 ||
+        toNumber(line.quantity) <= 0
+      );
+    });
+
+    if (invalidLine) {
+      setErrorMessage(
+        `La partida "${lineDescription(
+          invalidLine,
+        )}" debe tener oferta válida y cantidad mayor a cero.`,
+      );
+      setWarningMessage("");
+      return;
+    }
+
+    const quotationLines = lines.map((line) => {
+      const selectedOffer = selectedOffersByLineId.get(line.id)!;
+      const supplierCost = roundMoney(toNumber(selectedOffer.unit_price));
+      const quantity = toNumber(line.quantity);
+
+      const suggestedPrice = roundMoney(
+        supplierCost / (1 - parsedTargetMargin / 100),
+      );
+      const finalUnitPrice = suggestedPrice;
+      const lineTotal = roundMoney(finalUnitPrice * quantity);
+      const lineProfit = roundMoney((finalUnitPrice - supplierCost) * quantity);
+      const realMargin =
+        finalUnitPrice > 0
+          ? roundMoney(((finalUnitPrice - supplierCost) / finalUnitPrice) * 100)
+          : 0;
+      const notes = [
+        `Generada desde oferta proveedor ${selectedOffer.id}.`,
+        selectedOffer.lead_time_days
+          ? `Tiempo de entrega: ${selectedOffer.lead_time_days} días.`
+          : null,
+        selectedOffer.notes ? `Notas oferta: ${selectedOffer.notes}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+
+      return {
+        company_id: companyId,
+        custom_description: line.description,
+        final_unit_price: finalUnitPrice,
+        line_profit: lineProfit,
+        line_total: lineTotal,
+        notes,
+        product_id: line.product_id,
+        quantity,
+        real_margin: realMargin,
+        selected: true,
+        suggested_price: suggestedPrice,
+        supplier_cost: supplierCost,
+        supplier_id: selectedOffer.supplier_id,
+        target_margin: parsedTargetMargin,
+      };
+    });
+
+    setIsGeneratingQuotation(true);
+    setErrorMessage("");
+    setWarningMessage("");
+
+    try {
+      const currentDate = new Date();
+      const notes = [
+        `Cotización generada desde solicitud ${request.folio || request.id}.`,
+        request.description ? `Descripción: ${request.description}` : null,
+        request.notes ? `Notas solicitud: ${request.notes}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const { data: quotationData, error: quotationError } = await supabase
+        .from("quotations")
+        .insert({
+          client_id: request.client_id,
+          company_id: companyId,
+          contact_ref_id: request.contact_ref_id,
+          notes,
+          quoted_at: todayDate(),
+          request_id: request.id,
+          status: "draft",
+          valid_until: addDays(currentDate, 15),
+        })
+        .select("id")
+        .single();
+
+      if (quotationError || !quotationData) {
+        throw new Error(quotationError?.message ?? "No se pudo crear la cotización.");
+      }
+
+      const { error: linesError } = await supabase.from("quotation_lines").insert(
+        quotationLines.map((line) => ({
+          ...line,
+          quotation_id: quotationData.id,
+        })),
+      );
+
+      if (linesError) {
+        throw new Error(linesError.message);
+      }
+
+      router.push(`/dashboard/cotizaciones/${quotationData.id}`);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar la cotización.",
+      );
+    } finally {
+      setIsGeneratingQuotation(false);
+    }
+  }
+
   const clientName = request?.client_id
     ? clientsById.get(request.client_id)?.name ?? "Cliente no disponible"
     : "Sin cliente";
@@ -827,6 +1021,12 @@ export function SolicitudDetalleClient({
       {errorMessage ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
           {errorMessage}
+        </div>
+      ) : null}
+
+      {warningMessage ? (
+        <div className="rounded-lg border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
+          {warningMessage}
         </div>
       ) : null}
 
@@ -1140,12 +1340,47 @@ export function SolicitudDetalleClient({
 
       <section className="rounded-lg border border-stone-200 bg-white shadow-sm">
         <div className="border-b border-stone-200 p-5">
-          <h3 className="text-lg font-semibold text-stone-950">
-            Partidas solicitadas
-          </h3>
-          <p className="mt-1 text-sm text-stone-600">
-            Lista de artículos o servicios requeridos por el cliente.
-          </p>
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-stone-950">
+                Partidas solicitadas
+              </h3>
+              <p className="mt-1 text-sm text-stone-600">
+                Lista de artículos o servicios requeridos por el cliente.
+              </p>
+            </div>
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-end">
+              <div className="space-y-2">
+                <label
+                  className="text-sm font-medium text-stone-800"
+                  htmlFor="target_margin"
+                >
+                  Margen objetivo %
+                </label>
+                <input
+                  className="h-10 w-36 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                  disabled={isLoading || isGeneratingQuotation}
+                  id="target_margin"
+                  max="99.99"
+                  min="0"
+                  onChange={(event) => setTargetMargin(event.target.value)}
+                  step="0.01"
+                  type="number"
+                  value={targetMargin}
+                />
+              </div>
+              <button
+                className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+                disabled={isLoading || isGeneratingQuotation || lines.length === 0}
+                onClick={generateQuotation}
+                type="button"
+              >
+                {isGeneratingQuotation
+                  ? "Generando..."
+                  : "Generar cotización"}
+              </button>
+            </div>
+          </div>
         </div>
 
         {isLoading ? (
