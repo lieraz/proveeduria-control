@@ -124,7 +124,7 @@ const emptyOfferForm: OfferFormState = {
   notes: "",
 };
 
-const defaultTargetMargin = "20";
+const defaultTargetMargin = "0.40";
 
 function cleanOptionalValue(value: string) {
   const trimmedValue = value.trim();
@@ -134,6 +134,18 @@ function cleanOptionalValue(value: string) {
 function optionalNumber(value: string) {
   const cleanedValue = cleanOptionalValue(value);
   return cleanedValue === null ? null : Number(cleanedValue);
+}
+
+function targetMarginDecimal(value: string) {
+  const cleanedValue = cleanOptionalValue(value);
+  const parsedValue = cleanedValue === null ? 0.4 : Number(cleanedValue);
+
+  if (!Number.isFinite(parsedValue)) {
+    return null;
+  }
+
+  const decimalValue = parsedValue > 1 ? parsedValue / 100 : parsedValue;
+  return decimalValue >= 0 && decimalValue < 1 ? decimalValue : null;
 }
 
 function toNumber(value: number | string | null | undefined) {
@@ -868,14 +880,12 @@ export function SolicitudDetalleClient({
       return;
     }
 
-    const parsedTargetMargin = Number(targetMargin);
+    const parsedTargetMargin = targetMarginDecimal(targetMargin);
 
-    if (
-      !Number.isFinite(parsedTargetMargin) ||
-      parsedTargetMargin < 0 ||
-      parsedTargetMargin >= 100
-    ) {
-      setErrorMessage("El margen objetivo debe ser mayor o igual a 0 y menor a 100.");
+    if (parsedTargetMargin === null) {
+      setErrorMessage(
+        "El margen objetivo debe ser mayor o igual a 0 y menor a 100%.",
+      );
       setWarningMessage("");
       return;
     }
@@ -906,15 +916,9 @@ export function SolicitudDetalleClient({
       const quantity = toNumber(line.quantity);
 
       const suggestedPrice = roundMoney(
-        supplierCost / (1 - parsedTargetMargin / 100),
+        supplierCost / (1 - parsedTargetMargin),
       );
       const finalUnitPrice = suggestedPrice;
-      const lineTotal = roundMoney(finalUnitPrice * quantity);
-      const lineProfit = roundMoney((finalUnitPrice - supplierCost) * quantity);
-      const realMargin =
-        finalUnitPrice > 0
-          ? roundMoney(((finalUnitPrice - supplierCost) / finalUnitPrice) * 100)
-          : 0;
       const notes = [
         `Generada desde oferta proveedor ${selectedOffer.id}.`,
         selectedOffer.lead_time_days
@@ -929,14 +933,10 @@ export function SolicitudDetalleClient({
         company_id: companyId,
         custom_description: line.description,
         final_unit_price: finalUnitPrice,
-        line_profit: lineProfit,
-        line_total: lineTotal,
         notes,
         product_id: line.product_id,
         quantity,
-        real_margin: realMargin,
         selected: true,
-        suggested_price: suggestedPrice,
         supplier_cost: supplierCost,
         supplier_id: selectedOffer.supplier_id,
         target_margin: parsedTargetMargin,
@@ -949,6 +949,7 @@ export function SolicitudDetalleClient({
 
     try {
       const currentDate = new Date();
+      const validUntil = addDays(currentDate, 15);
       const notes = [
         `Cotización generada desde solicitud ${request.folio || request.id}.`,
         request.description ? `Descripción: ${request.description}` : null,
@@ -966,8 +967,8 @@ export function SolicitudDetalleClient({
           notes,
           quoted_at: todayDate(),
           request_id: request.id,
-          status: "draft",
-          valid_until: addDays(currentDate, 15),
+          status: "borrador",
+          valid_until: validUntil,
         })
         .select("id")
         .single();
@@ -978,8 +979,17 @@ export function SolicitudDetalleClient({
 
       const { error: linesError } = await supabase.from("quotation_lines").insert(
         quotationLines.map((line) => ({
-          ...line,
+          company_id: line.company_id,
+          custom_description: line.custom_description,
+          final_unit_price: line.final_unit_price,
+          notes: line.notes,
+          product_id: line.product_id,
+          quantity: line.quantity,
           quotation_id: quotationData.id,
+          selected: line.selected,
+          supplier_cost: line.supplier_cost,
+          supplier_id: line.supplier_id,
+          target_margin: line.target_margin,
         })),
       );
 
@@ -1355,7 +1365,7 @@ export function SolicitudDetalleClient({
                   className="text-sm font-medium text-stone-800"
                   htmlFor="target_margin"
                 >
-                  Margen objetivo %
+                  Margen objetivo
                 </label>
                 <input
                   className="h-10 w-36 rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"

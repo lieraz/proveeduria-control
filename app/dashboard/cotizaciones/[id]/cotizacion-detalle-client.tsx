@@ -97,6 +97,18 @@ function optionalNumber(value: string) {
   return cleanedValue === null ? null : Number(cleanedValue);
 }
 
+function targetMarginDecimal(value: string) {
+  const cleanedValue = cleanOptionalValue(value);
+  const parsedValue = cleanedValue === null ? 0.4 : Number(cleanedValue);
+
+  if (!Number.isFinite(parsedValue)) {
+    return null;
+  }
+
+  const decimalValue = parsedValue > 1 ? parsedValue / 100 : parsedValue;
+  return decimalValue >= 0 && decimalValue < 1 ? decimalValue : null;
+}
+
 function toNumber(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === "") {
     return 0;
@@ -372,6 +384,15 @@ export function CotizacionDetalleClient({
       return;
     }
 
+    const targetMargin = targetMarginDecimal(form.target_margin);
+
+    if (targetMargin === null) {
+      setErrorMessage(
+        "El margen objetivo debe ser mayor o igual a 0 y menor a 100%.",
+      );
+      return;
+    }
+
     setIsSaving(true);
     setErrorMessage("");
 
@@ -384,7 +405,7 @@ export function CotizacionDetalleClient({
       selected: form.selected,
       supplier_cost: optionalNumber(form.supplier_cost),
       supplier_id: cleanOptionalValue(form.supplier_id),
-      target_margin: optionalNumber(form.target_margin) ?? 0.4,
+      target_margin: targetMargin,
     };
 
     const { error } = editingLineId
