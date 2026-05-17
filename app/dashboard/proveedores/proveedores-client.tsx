@@ -94,6 +94,7 @@ export function ProveedoresClient() {
   const [search, setSearch] = useState("");
   const [selectedContactsSupplier, setSelectedContactsSupplier] =
     useState<SupplierRecord | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   const loadSuppliers = useCallback(
     async (activeCompanyId: string, searchValue: string) => {
@@ -225,6 +226,7 @@ export function ProveedoresClient() {
     }
 
     setEditingSupplierId(null);
+    setShowCreateForm(false);
     setSelectedContactsSupplier((currentSupplier) =>
       currentSupplier?.id === editingSupplierId
         ? {
@@ -239,6 +241,7 @@ export function ProveedoresClient() {
 
   function startEditing(supplier: SupplierRecord) {
     setEditingSupplierId(supplier.id);
+    setShowCreateForm(false);
     setForm({
       name: supplier.name,
       rfc: supplier.rfc ?? "",
@@ -254,6 +257,26 @@ export function ProveedoresClient() {
 
   function cancelEditing() {
     setEditingSupplierId(null);
+    setForm(emptyForm);
+    setErrorMessage("");
+  }
+
+  function toggleCreateForm() {
+    if (showCreateForm) {
+      setShowCreateForm(false);
+      setForm(emptyForm);
+      setErrorMessage("");
+      return;
+    }
+
+    setEditingSupplierId(null);
+    setForm(emptyForm);
+    setErrorMessage("");
+    setShowCreateForm(true);
+  }
+
+  function cancelCreate() {
+    setShowCreateForm(false);
     setForm(emptyForm);
     setErrorMessage("");
   }
@@ -302,7 +325,7 @@ export function ProveedoresClient() {
   return (
     <div className="space-y-6">
       <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className={`${editingSupplierId || showCreateForm ? "mb-5" : ""} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
           <div>
             <h3 className="text-lg font-semibold text-stone-950">
               {editingSupplierId ? "Editar proveedor" : "Nuevo proveedor"}
@@ -321,10 +344,25 @@ export function ProveedoresClient() {
             >
               Cancelar edición
             </button>
-          ) : null}
+          ) : (
+            <button
+              className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+              disabled={isSaving}
+              onClick={toggleCreateForm}
+              type="button"
+            >
+              {showCreateForm ? "Ocultar formulario" : "Nuevo proveedor"}
+            </button>
+          )}
         </div>
 
-        <form className="grid gap-4 lg:grid-cols-2" onSubmit={handleSubmit}>
+        {editingSupplierId || showCreateForm ? (
+          <form className="grid gap-4 rounded-lg border border-stone-200 p-4 lg:grid-cols-2" onSubmit={handleSubmit}>
+          <div className="lg:col-span-2">
+            <h4 className="text-base font-semibold text-stone-950">
+              {editingSupplierId ? "Editar proveedor" : "Nuevo registro"}
+            </h4>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-stone-800" htmlFor="name">
               Nombre
@@ -511,8 +549,19 @@ export function ProveedoresClient() {
                   ? "Guardar cambios"
                   : "Crear proveedor"}
             </button>
+            {!editingSupplierId ? (
+              <button
+                className="h-11 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSaving}
+                onClick={cancelCreate}
+                type="button"
+              >
+                Cancelar
+              </button>
+            ) : null}
           </div>
-        </form>
+          </form>
+        ) : null}
       </section>
 
       {selectedContactsSupplier ? (

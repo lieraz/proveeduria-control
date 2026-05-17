@@ -45,6 +45,7 @@ export function ClientesClient() {
   const [search, setSearch] = useState("");
   const [selectedContactsClient, setSelectedContactsClient] =
     useState<ClientRecord | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   const loadClients = useCallback(
     async (activeCompanyId: string, searchValue: string) => {
@@ -171,6 +172,7 @@ export function ClientesClient() {
     }
 
     setEditingClientId(null);
+    setShowCreateForm(false);
     setSelectedContactsClient((currentClient) =>
       currentClient?.id === editingClientId
         ? {
@@ -185,6 +187,7 @@ export function ClientesClient() {
 
   function startEditing(client: ClientRecord) {
     setEditingClientId(client.id);
+    setShowCreateForm(false);
     setForm({
       name: client.name,
       notes: client.notes ?? "",
@@ -196,6 +199,26 @@ export function ClientesClient() {
 
   function cancelEditing() {
     setEditingClientId(null);
+    setForm(emptyForm);
+    setErrorMessage("");
+  }
+
+  function toggleCreateForm() {
+    if (showCreateForm) {
+      setShowCreateForm(false);
+      setForm(emptyForm);
+      setErrorMessage("");
+      return;
+    }
+
+    setEditingClientId(null);
+    setForm(emptyForm);
+    setErrorMessage("");
+    setShowCreateForm(true);
+  }
+
+  function cancelCreate() {
+    setShowCreateForm(false);
     setForm(emptyForm);
     setErrorMessage("");
   }
@@ -244,7 +267,7 @@ export function ClientesClient() {
   return (
     <div className="space-y-6">
       <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className={`${editingClientId || showCreateForm ? "mb-5" : ""} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
           <div>
             <h3 className="text-lg font-semibold text-stone-950">
               {editingClientId ? "Editar cliente" : "Nuevo cliente"}
@@ -263,10 +286,25 @@ export function ClientesClient() {
             >
               Cancelar edición
             </button>
-          ) : null}
+          ) : (
+            <button
+              className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+              disabled={isSaving}
+              onClick={toggleCreateForm}
+              type="button"
+            >
+              {showCreateForm ? "Ocultar formulario" : "Nuevo cliente"}
+            </button>
+          )}
         </div>
 
-        <form className="grid gap-4 lg:grid-cols-2" onSubmit={handleSubmit}>
+        {editingClientId || showCreateForm ? (
+          <form className="grid gap-4 rounded-lg border border-stone-200 p-4 lg:grid-cols-2" onSubmit={handleSubmit}>
+          <div className="lg:col-span-2">
+            <h4 className="text-base font-semibold text-stone-950">
+              {editingClientId ? "Editar cliente" : "Nuevo registro"}
+            </h4>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-stone-800" htmlFor="name">
               Nombre
@@ -366,8 +404,19 @@ export function ClientesClient() {
                   ? "Guardar cambios"
                   : "Crear cliente"}
             </button>
+            {!editingClientId ? (
+              <button
+                className="h-11 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSaving}
+                onClick={cancelCreate}
+                type="button"
+              >
+                Cancelar
+              </button>
+            ) : null}
           </div>
-        </form>
+          </form>
+        ) : null}
       </section>
 
       {selectedContactsClient ? (

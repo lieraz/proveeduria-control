@@ -101,6 +101,7 @@ export function ProductosClient() {
     null,
   );
   const [search, setSearch] = useState("");
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   const loadProducts = useCallback(
     async (activeCompanyId: string, searchValue: string) => {
@@ -225,12 +226,14 @@ export function ProductosClient() {
     }
 
     setEditingProductId(null);
+    setShowCreateForm(false);
     setForm(emptyForm);
     await loadProducts(companyId, search);
   }
 
   function startEditing(product: ProductRecord) {
     setEditingProductId(product.id);
+    setShowCreateForm(false);
     setForm({
       name: product.name,
       category: product.category ?? "",
@@ -243,6 +246,26 @@ export function ProductosClient() {
 
   function cancelEditing() {
     setEditingProductId(null);
+    setForm(emptyForm);
+    setErrorMessage("");
+  }
+
+  function toggleCreateForm() {
+    if (showCreateForm) {
+      setShowCreateForm(false);
+      setForm(emptyForm);
+      setErrorMessage("");
+      return;
+    }
+
+    setEditingProductId(null);
+    setForm(emptyForm);
+    setErrorMessage("");
+    setShowCreateForm(true);
+  }
+
+  function cancelCreate() {
+    setShowCreateForm(false);
     setForm(emptyForm);
     setErrorMessage("");
   }
@@ -285,7 +308,7 @@ export function ProductosClient() {
   return (
     <div className="space-y-6">
       <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className={`${editingProductId || showCreateForm ? "mb-5" : ""} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
           <div>
             <h3 className="text-lg font-semibold text-stone-950">
               {editingProductId ? "Editar producto" : "Nuevo producto"}
@@ -304,10 +327,25 @@ export function ProductosClient() {
             >
               Cancelar edición
             </button>
-          ) : null}
+          ) : (
+            <button
+              className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+              disabled={isSaving}
+              onClick={toggleCreateForm}
+              type="button"
+            >
+              {showCreateForm ? "Ocultar formulario" : "Nuevo producto"}
+            </button>
+          )}
         </div>
 
-        <form className="grid gap-4 lg:grid-cols-2" onSubmit={handleSubmit}>
+        {editingProductId || showCreateForm ? (
+          <form className="grid gap-4 rounded-lg border border-stone-200 p-4 lg:grid-cols-2" onSubmit={handleSubmit}>
+          <div className="lg:col-span-2">
+            <h4 className="text-base font-semibold text-stone-950">
+              {editingProductId ? "Editar producto" : "Nuevo registro"}
+            </h4>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-stone-800" htmlFor="name">
               Nombre
@@ -436,8 +474,19 @@ export function ProductosClient() {
                   ? "Guardar cambios"
                   : "Crear producto"}
             </button>
+            {!editingProductId ? (
+              <button
+                className="h-11 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSaving}
+                onClick={cancelCreate}
+                type="button"
+              >
+                Cancelar
+              </button>
+            ) : null}
           </div>
-        </form>
+          </form>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-stone-200 bg-white shadow-sm">

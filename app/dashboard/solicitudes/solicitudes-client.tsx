@@ -171,6 +171,7 @@ export function SolicitudesClient() {
   >(new Map());
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [search, setSearch] = useState("");
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   const clientsById = useMemo(
     () => new Map(clients.map((client) => [client.id, client])),
@@ -396,6 +397,7 @@ export function SolicitudesClient() {
 
     setEditingRequestId(null);
     setEditingFolio(null);
+    setShowCreateForm(false);
     setForm(emptyForm());
     await loadRequests(companyId, search, clientsById);
   }
@@ -403,6 +405,7 @@ export function SolicitudesClient() {
   function startEditing(request: RequestRecord) {
     setEditingRequestId(request.id);
     setEditingFolio(request.folio);
+    setShowCreateForm(false);
     setForm({
       client_id: request.client_id ?? "",
       contact_ref_id: request.contact_ref_id ?? "",
@@ -426,6 +429,27 @@ export function SolicitudesClient() {
   function cancelEditing() {
     setEditingRequestId(null);
     setEditingFolio(null);
+    setForm(emptyForm());
+    setErrorMessage("");
+  }
+
+  function toggleCreateForm() {
+    if (showCreateForm) {
+      setShowCreateForm(false);
+      setForm(emptyForm());
+      setErrorMessage("");
+      return;
+    }
+
+    setEditingRequestId(null);
+    setEditingFolio(null);
+    setForm(emptyForm());
+    setErrorMessage("");
+    setShowCreateForm(true);
+  }
+
+  function cancelCreate() {
+    setShowCreateForm(false);
     setForm(emptyForm());
     setErrorMessage("");
   }
@@ -471,7 +495,7 @@ export function SolicitudesClient() {
   return (
     <div className="space-y-6">
       <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className={`${editingRequestId || showCreateForm ? "mb-5" : ""} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
           <div>
             <h3 className="text-lg font-semibold text-stone-950">
               {editingRequestId ? "Editar solicitud" : "Nueva solicitud"}
@@ -490,10 +514,25 @@ export function SolicitudesClient() {
             >
               Cancelar edición
             </button>
-          ) : null}
+          ) : (
+            <button
+              className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+              disabled={isSaving}
+              onClick={toggleCreateForm}
+              type="button"
+            >
+              {showCreateForm ? "Ocultar formulario" : "Nueva solicitud"}
+            </button>
+          )}
         </div>
 
-        <form className="grid gap-4 lg:grid-cols-2" onSubmit={handleSubmit}>
+        {editingRequestId || showCreateForm ? (
+          <form className="grid gap-4 rounded-lg border border-stone-200 p-4 lg:grid-cols-2" onSubmit={handleSubmit}>
+          <div className="lg:col-span-2">
+            <h4 className="text-base font-semibold text-stone-950">
+              {editingRequestId ? "Editar solicitud" : "Nuevo registro"}
+            </h4>
+          </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-stone-800" htmlFor="folio">
               Folio
@@ -756,8 +795,19 @@ export function SolicitudesClient() {
                   ? "Guardar cambios"
                   : "Crear solicitud"}
             </button>
+            {!editingRequestId ? (
+              <button
+                className="h-11 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSaving}
+                onClick={cancelCreate}
+                type="button"
+              >
+                Cancelar
+              </button>
+            ) : null}
           </div>
-        </form>
+          </form>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-stone-200 bg-white shadow-sm">

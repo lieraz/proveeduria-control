@@ -65,6 +65,7 @@ export function ContactosSection({
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [showCreateForm, setShowCreateForm] = useState(false);
 
   const loadContacts = useCallback(async () => {
     if (!companyId) {
@@ -153,12 +154,14 @@ export function ContactosSection({
     }
 
     setEditingContactId(null);
+    setShowCreateForm(false);
     setForm(emptyContactForm);
     await loadContacts();
   }
 
   function startEditing(contact: ContactRecord) {
     setEditingContactId(contact.id);
+    setShowCreateForm(false);
     setForm({
       organization_area: contact.organization_area ?? "",
       contact_name: contact.contact_name ?? "",
@@ -173,6 +176,26 @@ export function ContactosSection({
 
   function cancelEditing() {
     setEditingContactId(null);
+    setForm(emptyContactForm);
+    setErrorMessage("");
+  }
+
+  function toggleCreateForm() {
+    if (showCreateForm) {
+      setShowCreateForm(false);
+      setForm(emptyContactForm);
+      setErrorMessage("");
+      return;
+    }
+
+    setEditingContactId(null);
+    setForm(emptyContactForm);
+    setErrorMessage("");
+    setShowCreateForm(true);
+  }
+
+  function cancelCreate() {
+    setShowCreateForm(false);
     setForm(emptyContactForm);
     setErrorMessage("");
   }
@@ -227,13 +250,23 @@ export function ContactosSection({
               Administra contactos asociados a este {ownerLabel}.
             </p>
           </div>
-          <button
-            className="h-10 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50"
-            onClick={onClose}
-            type="button"
-          >
-            Cerrar contactos
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <button
+              className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+              disabled={isSaving}
+              onClick={toggleCreateForm}
+              type="button"
+            >
+              {showCreateForm ? "Ocultar formulario" : "Nuevo contacto"}
+            </button>
+            <button
+              className="h-10 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50"
+              onClick={onClose}
+              type="button"
+            >
+              Cerrar contactos
+            </button>
+          </div>
         </div>
       </div>
 
@@ -244,10 +277,11 @@ export function ContactosSection({
       ) : null}
 
       <div className="grid gap-6 p-5 xl:grid-cols-[minmax(280px,380px)_1fr]">
-        <form className="space-y-4" onSubmit={handleSubmit}>
+        {editingContactId || showCreateForm ? (
+          <form className="space-y-4 rounded-lg border border-stone-200 p-4" onSubmit={handleSubmit}>
           <div>
             <h4 className="text-base font-semibold text-stone-950">
-              {editingContactId ? "Editar contacto" : "Nuevo contacto"}
+              {editingContactId ? "Editar contacto" : "Nuevo registro"}
             </h4>
             <p className="mt-1 text-sm text-stone-600">
               Se guardará automáticamente en la empresa de tu perfil.
@@ -431,11 +465,25 @@ export function ContactosSection({
               >
                 Cancelar edición
               </button>
-            ) : null}
+            ) : (
+              <button
+                className="h-11 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSaving}
+                onClick={cancelCreate}
+                type="button"
+              >
+                Cancelar
+              </button>
+            )}
           </div>
-        </form>
+          </form>
+        ) : null}
 
-        <div className="min-w-0">
+        <div
+          className={`min-w-0 ${
+            editingContactId || showCreateForm ? "xl:col-span-1" : "xl:col-span-2"
+          }`}
+        >
           {isLoading ? (
             <div className="rounded-md border border-stone-200 p-4 text-sm font-medium text-stone-600">
               Cargando contactos...
