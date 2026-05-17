@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
 import { createClient } from "@/src/lib/supabase/client";
 
 type SupplierRecord = {
@@ -56,12 +57,14 @@ export function ProveedorDetalleClient({
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
   const [prices, setPrices] = useState<SupplierPriceRecord[]>([]);
+  const [successMessage, setSuccessMessage] = useState("");
   const [supplier, setSupplier] = useState<SupplierRecord | null>(null);
 
   useEffect(() => {
     async function loadSupplierDetail() {
       setIsLoading(true);
       setErrorMessage("");
+      setSuccessMessage("");
 
       const {
         data: { user },
@@ -149,28 +152,23 @@ export function ProveedorDetalleClient({
 
     setCatalogingPriceId(price.id);
     setErrorMessage("");
+    setSuccessMessage("");
 
-    const { data: productData, error: productError } = await supabase
-      .from("products")
-      .insert({
-        active: true,
-        company_id: companyId,
-        description: productName,
-        name: productName,
-        unit: price.unit || "pieza",
-      })
-      .select("id,name")
-      .single();
+    const productResponse = await resolveCatalogProduct(supabase, {
+      companyId,
+      name: productName,
+      unit: price.unit,
+    });
 
-    if (productError || !productData) {
+    if (productResponse.error) {
       setCatalogingPriceId(null);
-      setErrorMessage(productError?.message ?? "No se pudo crear el producto.");
+      setErrorMessage(productResponse.error.message);
       return;
     }
 
     const { error: priceError } = await supabase
       .from("supplier_prices")
-      .update({ product_id: productData.id })
+      .update({ product_id: productResponse.product.id })
       .eq("id", price.id)
       .eq("company_id", companyId);
 
@@ -181,13 +179,14 @@ export function ProveedorDetalleClient({
       return;
     }
 
+    setSuccessMessage("Producto agregado al catálogo.");
     setPrices((currentPrices) =>
       currentPrices.map((currentPrice) =>
         currentPrice.id === price.id
           ? {
               ...currentPrice,
-              product_id: productData.id,
-              products: [{ name: productData.name }],
+              product_id: productResponse.product.id,
+              products: [{ name: productResponse.product.name }],
             }
           : currentPrice,
       ),
@@ -206,6 +205,12 @@ export function ProveedorDetalleClient({
       {errorMessage ? (
         <div className="rounded-lg border border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
           {errorMessage}
+        </div>
+      ) : null}
+
+      {successMessage ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
+          {successMessage}
         </div>
       ) : null}
 

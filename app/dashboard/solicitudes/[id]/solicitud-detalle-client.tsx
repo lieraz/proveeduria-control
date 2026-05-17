@@ -642,35 +642,6 @@ export function SolicitudDetalleClient({
     setErrorMessage("");
   }
 
-  async function syncSupplierPriceFromOffer(
-    offer: SupplierOfferRecord,
-    line: ClientRequestLineRecord,
-  ) {
-    if (!companyId || !offer.supplier_id) {
-      return null;
-    }
-
-    return supabase.from("supplier_prices").upsert(
-      {
-        active: true,
-        company_id: companyId,
-        cost: offer.unit_price,
-        currency: offer.currency || "MXN",
-        item_description:
-          cleanOptionalValue(offer.supplier_description ?? "") ??
-          lineDescription(line),
-        notes: offer.notes,
-        product_id: line.product_id,
-        quoted_at: new Date().toISOString().slice(0, 10),
-        source_offer_id: offer.id,
-        supplier_id: offer.supplier_id,
-        unit: line.unit,
-        valid_until: offer.valid_until,
-      },
-      { onConflict: "source_offer_id" },
-    );
-  }
-
   async function handleOfferSubmit(
     line: ClientRequestLineRecord,
     event: FormEvent<HTMLFormElement>,
@@ -745,17 +716,7 @@ export function SolicitudDetalleClient({
       return;
     }
 
-    const priceResponse = await syncSupplierPriceFromOffer(
-      offerResponse.data as SupplierOfferRecord,
-      line,
-    );
-
     setIsSavingOffer(false);
-
-    if (priceResponse?.error) {
-      setErrorMessage(priceResponse.error.message);
-      return;
-    }
 
     cancelOfferEditing();
     await loadLines(companyId);

@@ -452,27 +452,35 @@ export function ProductosClient() {
               </p>
             </div>
 
-            <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
-              <label className="sr-only" htmlFor="product-search">
-                Buscar producto
-              </label>
-              <input
-                className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-72"
-                disabled={isLoading || isSearching}
-                id="product-search"
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar productos"
-                type="search"
-                value={search}
-              />
-              <button
-                className="h-10 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-                disabled={isLoading || isSearching}
-                type="submit"
+            <div className="flex flex-col gap-2 sm:flex-row">
+              <Link
+                className="inline-flex h-10 items-center justify-center rounded-md border border-emerald-200 px-4 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
+                href="/dashboard/productos/sin-catalogar"
               >
-                {isSearching ? "Buscando..." : "Buscar"}
-              </button>
-            </form>
+                Sin catalogar
+              </Link>
+              <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
+                <label className="sr-only" htmlFor="product-search">
+                  Buscar producto
+                </label>
+                <input
+                  className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-72"
+                  disabled={isLoading || isSearching}
+                  id="product-search"
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar productos"
+                  type="search"
+                  value={search}
+                />
+                <button
+                  className="h-10 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isLoading || isSearching}
+                  type="submit"
+                >
+                  {isSearching ? "Buscando..." : "Buscar"}
+                </button>
+              </form>
+            </div>
           </div>
         </div>
 

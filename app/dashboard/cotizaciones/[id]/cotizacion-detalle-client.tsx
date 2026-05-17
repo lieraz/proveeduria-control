@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -159,6 +160,7 @@ export function CotizacionDetalleClient({
   quotationId,
 }: CotizacionDetalleClientProps) {
   const supabase = useMemo(() => createClient(), []);
+  const [catalogingLineId, setCatalogingLineId] = useState<string | null>(null);
   const [clients, setClients] = useState<ClientRecord[]>([]);
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [contacts, setContacts] = useState<ContactRecord[]>([]);
@@ -171,6 +173,7 @@ export function CotizacionDetalleClient({
   const [lines, setLines] = useState<QuotationLineRecord[]>([]);
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [quotation, setQuotation] = useState<QuotationRecord | null>(null);
+  const [successMessage, setSuccessMessage] = useState("");
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
 
   const clientsById = useMemo(
@@ -237,6 +240,7 @@ export function CotizacionDetalleClient({
     async function loadInitialData() {
       setIsLoading(true);
       setErrorMessage("");
+      setSuccessMessage("");
 
       const {
         data: { user },
@@ -545,6 +549,58 @@ export function CotizacionDetalleClient({
     await loadLines(companyId);
   }
 
+  async function addLineProductToCatalog(line: QuotationLineRecord) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    setCatalogingLineId(line.id);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const productResponse = await resolveCatalogProduct(supabase, {
+      companyId,
+      name: line.custom_description,
+      unit: "pieza",
+    });
+
+    if (productResponse.error) {
+      setCatalogingLineId(null);
+      setErrorMessage(productResponse.error.message);
+      return;
+    }
+
+    const { error } = await supabase
+      .from("quotation_lines")
+      .update({ product_id: productResponse.product.id })
+      .eq("id", line.id)
+      .eq("company_id", companyId);
+
+    setCatalogingLineId(null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSuccessMessage("Producto agregado al catálogo.");
+    setProducts((currentProducts) =>
+      currentProducts.some((product) => product.id === productResponse.product.id)
+        ? currentProducts
+        : [
+            ...currentProducts,
+            {
+              description: line.custom_description,
+              id: productResponse.product.id,
+              name: productResponse.product.name,
+              unit: "pieza",
+            },
+          ],
+    );
+    await loadLines(companyId);
+  }
+
   const clientName = quotation?.client_id
     ? clientsById.get(quotation.client_id)?.name ?? "Cliente no disponible"
     : "Sin cliente";
@@ -578,6 +634,12 @@ export function CotizacionDetalleClient({
         {errorMessage ? (
           <div className="rounded-lg border border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
             {errorMessage}
+          </div>
+        ) : null}
+
+        {successMessage ? (
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
+            {successMessage}
           </div>
         ) : null}
 
@@ -895,7 +957,18 @@ export function CotizacionDetalleClient({
                         />
                       </td>
                       <td className="min-w-64 px-5 py-4 font-medium text-stone-950">
-                        {lineDescription(line)}
+                        <div className="space-y-2">
+                          <p>{lineDescription(line)}</p>
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                              line.product_id
+                                ? "bg-emerald-50 text-emerald-800"
+                                : "bg-amber-50 text-amber-800"
+                            }`}
+                          >
+                            {line.product_id ? "En catálogo" : "Sin catalogar"}
+                          </span>
+                        </div>
                       </td>
                       <td className="px-5 py-4 text-stone-700">
                         {line.supplier_id
@@ -934,6 +1007,22 @@ export function CotizacionDetalleClient({
                       </td>
                       <td className="px-5 py-4">
                         <div className="flex justify-end gap-2">
+                          {!line.product_id && line.custom_description ? (
+                            <button
+                              className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              disabled={
+                                isSaving ||
+                                isDeletingId === line.id ||
+                                catalogingLineId === line.id
+                              }
+                              onClick={() => addLineProductToCatalog(line)}
+                              type="button"
+                            >
+                              {catalogingLineId === line.id
+                                ? "Agregando..."
+                                : "Agregar al catálogo"}
+                            </button>
+                          ) : null}
                           <button
                             className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
                             disabled={isSaving || isDeletingId === line.id}
