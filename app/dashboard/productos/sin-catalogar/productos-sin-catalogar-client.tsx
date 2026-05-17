@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
 import { createClient } from "@/src/lib/supabase/client";
 
@@ -217,15 +218,21 @@ export function ProductosSinCatalogarClient() {
               <label className="sr-only" htmlFor="uncatalogued-search">
                 Buscar artículo
               </label>
-              <input
-                className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-72"
-                disabled={isLoading || isSearching}
-                id="uncatalogued-search"
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar sin catalogar"
-                type="search"
-                value={search}
-              />
+              <div className="relative">
+                <Search
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400"
+                />
+                <input
+                  className="h-10 w-full rounded-xl border border-stone-300 bg-white pl-9 pr-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-72"
+                  disabled={isLoading || isSearching}
+                  id="uncatalogued-search"
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar sin catalogar"
+                  type="search"
+                  value={search}
+                />
+              </div>
               <button
                 className="h-10 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={isLoading || isSearching}
@@ -267,7 +274,7 @@ export function ProductosSinCatalogarClient() {
                       {price.product_description || "Artículo sin descripción"}
                     </td>
                     <td className="px-5 py-4">
-                      <span className="inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
+                      <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">
                         Sin catalogar
                       </span>
                     </td>

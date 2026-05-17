@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -151,6 +152,35 @@ function requestMatchesSearch(
     request.description,
     request.status,
   ].some((value) => value?.toLowerCase().includes(normalizedSearch));
+}
+
+function urgencyBadgeClass(urgency: string | null) {
+  if (urgency === "muy urgente") {
+    return "border-red-200 bg-red-50 text-red-700";
+  }
+
+  if (urgency === "urgente") {
+    return "border-amber-200 bg-amber-50 text-amber-800";
+  }
+
+  return "border-emerald-200 bg-emerald-50 text-emerald-800";
+}
+
+function requestStatusBadgeClass(status: string | null) {
+  switch (status) {
+    case "cotizando":
+      return "border-sky-200 bg-sky-50 text-sky-800";
+    case "cotizada":
+      return "border-indigo-200 bg-indigo-50 text-indigo-800";
+    case "aprobada":
+      return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "rechazada":
+      return "border-red-200 bg-red-50 text-red-700";
+    case "cerrada":
+      return "border-stone-200 bg-stone-100 text-stone-600";
+    default:
+      return "border-amber-200 bg-amber-50 text-amber-800";
+  }
 }
 
 export function SolicitudesClient() {
@@ -826,15 +856,21 @@ export function SolicitudesClient() {
               <label className="sr-only" htmlFor="request-search">
                 Buscar solicitud
               </label>
-              <input
-                className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-72"
-                disabled={isLoading || isSearching}
-                id="request-search"
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar solicitudes"
-                type="search"
-                value={search}
-              />
+              <div className="relative">
+                <Search
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400"
+                />
+                <input
+                  className="h-10 w-full rounded-xl border border-stone-300 bg-white pl-9 pr-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-72"
+                  disabled={isLoading || isSearching}
+                  id="request-search"
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar solicitudes"
+                  type="search"
+                  value={search}
+                />
+              </div>
               <button
                 className="h-10 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={isLoading || isSearching}
@@ -914,19 +950,15 @@ export function SolicitudesClient() {
                     </td>
                     <td className="px-5 py-4">
                       <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                          request.urgency === "muy urgente"
-                            ? "bg-red-50 text-red-700"
-                            : request.urgency === "urgente"
-                              ? "bg-amber-50 text-amber-700"
-                              : "bg-emerald-50 text-emerald-800"
-                        }`}
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${urgencyBadgeClass(request.urgency)}`}
                       >
                         {request.urgency || "normal"}
                       </span>
                     </td>
                     <td className="px-5 py-4">
-                      <span className="inline-flex rounded-full bg-stone-100 px-2.5 py-1 text-xs font-semibold text-stone-700">
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${requestStatusBadgeClass(request.status)}`}
+                      >
                         {request.status || "nueva"}
                       </span>
                     </td>

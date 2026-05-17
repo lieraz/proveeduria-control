@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { Search } from "lucide-react";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -158,6 +159,21 @@ function quotationMatchesSearch(
   return [quotation.folio, clientName, quotation.status].some((value) =>
     value?.toLowerCase().includes(normalizedSearch),
   );
+}
+
+function quotationStatusBadgeClass(status: string | null) {
+  switch (status) {
+    case "enviada":
+      return "border-sky-200 bg-sky-50 text-sky-800";
+    case "aprobada":
+      return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "rechazada":
+      return "border-red-200 bg-red-50 text-red-700";
+    case "cancelada":
+      return "border-stone-200 bg-stone-100 text-stone-600";
+    default:
+      return "border-amber-200 bg-amber-50 text-amber-800";
+  }
 }
 
 export function CotizacionesClient() {
@@ -765,15 +781,21 @@ export function CotizacionesClient() {
               <label className="sr-only" htmlFor="quotation-search">
                 Buscar cotización
               </label>
-              <input
-                className="h-10 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-72"
-                disabled={isLoading || isSearching}
-                id="quotation-search"
-                onChange={(event) => setSearch(event.target.value)}
-                placeholder="Buscar cotizaciones"
-                type="search"
-                value={search}
-              />
+              <div className="relative">
+                <Search
+                  aria-hidden="true"
+                  className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-stone-400"
+                />
+                <input
+                  className="h-10 w-full rounded-xl border border-stone-300 bg-white pl-9 pr-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100 sm:w-72"
+                  disabled={isLoading || isSearching}
+                  id="quotation-search"
+                  onChange={(event) => setSearch(event.target.value)}
+                  placeholder="Buscar cotizaciones"
+                  type="search"
+                  value={search}
+                />
+              </div>
               <button
                 className="h-10 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
                 disabled={isLoading || isSearching}
@@ -847,7 +869,9 @@ export function CotizacionesClient() {
                       {formatDate(quotation.valid_until)}
                     </td>
                     <td className="px-5 py-4">
-                      <span className="inline-flex rounded-full bg-stone-100 px-2.5 py-1 text-xs font-semibold text-stone-700">
+                      <span
+                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${quotationStatusBadgeClass(quotation.status)}`}
+                      >
                         {quotation.status || "borrador"}
                       </span>
                     </td>

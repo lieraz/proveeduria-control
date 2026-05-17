@@ -5,22 +5,51 @@ import { usePathname, useRouter } from "next/navigation";
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import type { User } from "@supabase/supabase-js";
+import {
+  Boxes,
+  Building2,
+  ClipboardList,
+  FileText,
+  LayoutDashboard,
+  LogOut,
+  Package,
+  ReceiptText,
+  Truck,
+  UserRound,
+  UsersRound,
+} from "lucide-react";
 import { createClient } from "@/src/lib/supabase/client";
 
-const navigation = [
-  { label: "Panel", href: "/dashboard" },
-  { label: "Clientes", href: "/dashboard/clientes" },
-  { label: "Proveedores", href: "/dashboard/proveedores" },
-  { label: "Contactos", href: "/dashboard/contactos" },
-  { label: "Productos", href: "/dashboard/productos" },
-  { label: "Solicitudes", href: "/dashboard/solicitudes" },
-  { label: "Cotizaciones", href: "/dashboard/cotizaciones" },
-  { label: "Órdenes", href: "/dashboard/ordenes" },
-  { label: "Entregas", href: "/dashboard/entregas" },
-  { label: "Facturación", href: "/dashboard/facturacion" },
+const navigationGroups = [
+  {
+    label: "Operación",
+    items: [
+      { label: "Panel", href: "/dashboard", icon: LayoutDashboard },
+      { label: "Solicitudes", href: "/dashboard/solicitudes", icon: ClipboardList },
+    ],
+  },
+  {
+    label: "Catálogos",
+    items: [
+      { label: "Clientes", href: "/dashboard/clientes", icon: UsersRound },
+      { label: "Proveedores", href: "/dashboard/proveedores", icon: Building2 },
+      { label: "Contactos", href: "/dashboard/contactos", icon: UserRound },
+      { label: "Productos", href: "/dashboard/productos", icon: Package },
+    ],
+  },
+  {
+    label: "Compras",
+    items: [
+      { label: "Cotizaciones", href: "/dashboard/cotizaciones", icon: FileText },
+      { label: "Órdenes", href: "/dashboard/ordenes", icon: Boxes },
+      { label: "Entregas", href: "/dashboard/entregas", icon: Truck },
+      { label: "Facturación", href: "/dashboard/facturacion", icon: ReceiptText },
+    ],
+  },
 ];
 
 type DashboardShellProps = {
+  actions?: ReactNode;
   children?: ReactNode;
   description?: string;
   eyebrow?: string;
@@ -28,6 +57,7 @@ type DashboardShellProps = {
 };
 
 export function DashboardShell({
+  actions,
   children,
   description = "Vista inicial para coordinar solicitudes, cotizaciones, compras, entregas y facturación del equipo interno.",
   eyebrow = "Panel principal",
@@ -85,45 +115,67 @@ export function DashboardShell({
     );
   }
 
+  const isActiveRoute = (href: string) =>
+    href === "/dashboard" ? pathname === href : pathname.startsWith(href);
+
   return (
-    <main className="min-h-screen bg-stone-100 text-stone-950">
+    <main className="min-h-screen bg-[#f4f3ef] text-stone-950">
       <div className="flex min-h-screen flex-col lg:flex-row">
-        <aside className="border-b border-stone-200 bg-white lg:w-72 lg:border-b-0 lg:border-r">
-          <div className="flex items-center justify-between gap-4 border-b border-stone-200 px-5 py-5 lg:block">
+        <aside className="border-b border-stone-200/80 bg-white/95 lg:w-72 lg:border-b-0 lg:border-r">
+          <div className="flex items-center justify-between gap-4 border-b border-stone-200/80 px-5 py-5 lg:block">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
                 Control
               </p>
-              <h1 className="mt-1 text-xl font-semibold">Proveeduría</h1>
+              <h1 className="mt-1 text-xl font-semibold tracking-tight">
+                Proveeduría
+              </h1>
             </div>
             <button
-              className="rounded-md border border-stone-300 px-3 py-2 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60 lg:hidden"
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-stone-200 px-3 text-sm font-medium text-stone-700 shadow-sm transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60 lg:hidden"
               disabled={isSigningOut}
               onClick={handleLogout}
               type="button"
             >
+              <LogOut className="h-4 w-4" aria-hidden="true" />
               Salir
             </button>
           </div>
 
-          <nav className="flex gap-2 overflow-x-auto px-4 py-4 lg:flex-col lg:overflow-x-visible">
-            {navigation.map((item) => {
-              const isActive = pathname === item.href;
+          <nav className="flex gap-3 overflow-x-auto px-4 py-4 lg:flex-col lg:gap-6 lg:overflow-x-visible">
+            {navigationGroups.map((group) => (
+              <div className="flex shrink-0 gap-2 lg:block" key={group.label}>
+                <p className="hidden px-3 text-[11px] font-semibold uppercase tracking-wide text-stone-400 lg:mb-2 lg:block">
+                  {group.label}
+                </p>
+                <div className="flex gap-2 lg:flex-col">
+                  {group.items.map((item) => {
+                    const Icon = item.icon;
+                    const isActive = isActiveRoute(item.href);
 
-              return (
-                <Link
-                  className={`whitespace-nowrap rounded-md px-3 py-2 text-sm font-medium transition ${
-                    isActive
-                      ? "bg-emerald-800 text-white hover:bg-emerald-900"
-                      : "text-stone-700 hover:bg-emerald-50 hover:text-emerald-900"
-                  }`}
-                  href={item.href}
-                  key={item.href}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
+                    return (
+                      <Link
+                        className={`inline-flex h-10 items-center gap-3 whitespace-nowrap rounded-xl px-3 text-sm font-medium transition ${
+                          isActive
+                            ? "bg-stone-950 text-white shadow-sm"
+                            : "text-stone-600 hover:bg-stone-100 hover:text-stone-950"
+                        }`}
+                        href={item.href}
+                        key={item.href}
+                      >
+                        <Icon
+                          aria-hidden="true"
+                          className={`h-4 w-4 ${
+                            isActive ? "text-emerald-300" : "text-stone-400"
+                          }`}
+                        />
+                        {item.label}
+                      </Link>
+                    );
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
         </aside>
 
@@ -136,26 +188,34 @@ export function DashboardShell({
               </p>
             </div>
             <button
-              className="rounded-md border border-stone-300 px-4 py-2 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-stone-200 px-4 text-sm font-medium text-stone-700 shadow-sm transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
               disabled={isSigningOut}
               onClick={handleLogout}
               type="button"
             >
+              <LogOut className="h-4 w-4" aria-hidden="true" />
               {isSigningOut ? "Cerrando..." : "Cerrar sesión"}
             </button>
           </header>
 
-          <div className="flex-1 px-5 py-6 sm:px-8">
-            <div className="mb-8">
-              <p className="text-sm font-medium uppercase tracking-wide text-emerald-700">
-                {eyebrow}
-              </p>
-              <h2 className="mt-2 text-3xl font-semibold tracking-tight">
-                {title}
-              </h2>
-              <p className="mt-3 max-w-3xl text-sm leading-6 text-stone-600">
-                {description}
-              </p>
+          <div className="flex-1 px-5 py-6 sm:px-8 lg:py-8">
+            <div className="mb-8 flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                  {eyebrow}
+                </p>
+                <h2 className="mt-2 text-3xl font-semibold tracking-tight">
+                  {title}
+                </h2>
+                <p className="mt-3 max-w-3xl text-sm leading-6 text-stone-600">
+                  {description}
+                </p>
+              </div>
+              {actions ? (
+                <div className="flex flex-wrap items-center gap-2 lg:justify-end">
+                  {actions}
+                </div>
+              ) : null}
             </div>
 
             {children ?? (
@@ -166,7 +226,7 @@ export function DashboardShell({
                   ["Entregas", "Seguimiento operativo"],
                 ].map(([title, description]) => (
                   <article
-                    className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm"
+                    className="rounded-2xl bg-white p-5 shadow-sm ring-1 ring-stone-200/70"
                     key={title}
                   >
                     <h3 className="text-base font-semibold">{title}</h3>

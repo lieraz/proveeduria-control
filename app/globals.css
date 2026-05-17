@@ -17,6 +17,90 @@ body {
   color: var(--foreground);
 }
 
+button,
+a,
+input,
+select,
+textarea {
+  -webkit-tap-highlight-color: transparent;
+}
+
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+main section[class*="bg-white"] {
+  border-color: rgb(231 229 228 / 0.72);
+  border-radius: 1rem;
+  box-shadow:
+    0 1px 2px rgb(28 25 23 / 0.04),
+    0 10px 24px rgb(28 25 23 / 0.04);
+}
+
+main form[class*="border"] {
+  border-color: rgb(231 229 228 / 0.72);
+  border-radius: 0.875rem;
+  background: rgb(250 250 249 / 0.72);
+}
+
+main label:not(.sr-only) {
+  color: #44403c;
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+main input:not([type="checkbox"]),
+main select,
+main textarea {
+  border-color: #d6d3d1;
+  border-radius: 0.75rem;
+  box-shadow: 0 1px 1px rgb(28 25 23 / 0.02);
+}
+
+main input:not([type="checkbox"]):focus,
+main select:focus,
+main textarea:focus {
+  border-color: #047857;
+  box-shadow: 0 0 0 3px rgb(16 185 129 / 0.12);
+}
+
+main button,
+main a[class*="inline-flex"] {
+  border-radius: 0.75rem;
+}
+
+main table {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+main thead {
+  background: #fafaf9;
+}
+
+main th {
+  color: #78716c;
+  font-size: 0.6875rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+main tbody tr {
+  transition:
+    background-color 150ms ease,
+    box-shadow 150ms ease;
+}
+
+main tbody tr:hover {
+  background: #fafaf9;
+}
+
+main td {
+  vertical-align: middle;
+}
+
 .print-only {
   display: none;
 }
