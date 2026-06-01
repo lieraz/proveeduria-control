@@ -2,14 +2,8 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import {
-  Fragment,
-  FormEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from "react";
+import { ChevronDown, ChevronUp } from "lucide-react";
+import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { createClient } from "@/src/lib/supabase/client";
 import type {
   ClientRequestLineInsert,
@@ -227,6 +221,7 @@ export function SolicitudDetalleClient({
   const [contacts, setContacts] = useState<ContactRecord[]>([]);
   const [editingOfferId, setEditingOfferId] = useState<string | null>(null);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
+  const [expandedLineId, setExpandedLineId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [form, setForm] = useState<LineFormState>(emptyLineForm);
   const [offerForm, setOfferForm] = useState<OfferFormState>(emptyOfferForm);
@@ -246,6 +241,7 @@ export function SolicitudDetalleClient({
   const [offers, setOffers] = useState<SupplierOfferRecord[]>([]);
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [request, setRequest] = useState<RequestRecord | null>(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [targetMargin, setTargetMargin] = useState(defaultTargetMargin);
   const [warningMessage, setWarningMessage] = useState("");
@@ -458,6 +454,34 @@ export function SolicitudDetalleClient({
     return line.description || productName || "Sin descripción";
   }
 
+  function selectedOrBestOffer(lineOffers: SupplierOfferRecord[]) {
+    const selectedOffer = lineOffers.find((offer) => offer.is_selected);
+
+    if (selectedOffer) {
+      return selectedOffer;
+    }
+
+    return [...lineOffers]
+      .filter((offer) => toNumber(offer.unit_price) > 0)
+      .sort((firstOffer, secondOffer) => {
+        return toNumber(firstOffer.unit_price) - toNumber(secondOffer.unit_price);
+      })[0];
+  }
+
+  function toggleLineDetails(line: ClientRequestLineRecord) {
+    const isCollapsing = expandedLineId === line.id;
+
+    setExpandedLineId(isCollapsing ? null : line.id);
+
+    if (isCollapsing || editingLineId !== line.id) {
+      cancelEditing();
+    }
+
+    if (isCollapsing || offerFormLineId !== line.id) {
+      cancelOfferEditing();
+    }
+  }
+
   function handleProductChange(productId: string) {
     const selectedProduct = productsById.get(productId);
 
@@ -534,12 +558,16 @@ export function SolicitudDetalleClient({
     }
 
     setEditingLineId(null);
+    setShowCreateForm(false);
     setForm(emptyLineForm);
     await loadLines(companyId);
   }
 
   function startEditing(line: ClientRequestLineRecord) {
     setEditingLineId(line.id);
+    setExpandedLineId(line.id);
+    setShowCreateForm(false);
+    cancelOfferEditing();
     setForm({
       description: line.description ?? "",
       notes: line.notes ?? "",
@@ -558,6 +586,27 @@ export function SolicitudDetalleClient({
 
   function cancelEditing() {
     setEditingLineId(null);
+    setForm(emptyLineForm);
+    setErrorMessage("");
+  }
+
+  function toggleCreateForm() {
+    if (showCreateForm) {
+      setShowCreateForm(false);
+      setForm(emptyLineForm);
+      setErrorMessage("");
+      return;
+    }
+
+    setEditingLineId(null);
+    cancelOfferEditing();
+    setForm(emptyLineForm);
+    setErrorMessage("");
+    setShowCreateForm(true);
+  }
+
+  function cancelCreate() {
+    setShowCreateForm(false);
     setForm(emptyLineForm);
     setErrorMessage("");
   }
@@ -596,10 +645,17 @@ export function SolicitudDetalleClient({
       cancelEditing();
     }
 
+    if (expandedLineId === line.id) {
+      setExpandedLineId(null);
+    }
+
     await loadLines(companyId);
   }
 
   function startAddingOffer(line: ClientRequestLineRecord) {
+    setEditingLineId(null);
+    setExpandedLineId(line.id);
+    setShowCreateForm(false);
     setEditingOfferId(null);
     setOfferFormLineId(line.id);
     setOfferForm({
@@ -610,6 +666,9 @@ export function SolicitudDetalleClient({
   }
 
   function startEditingOffer(offer: SupplierOfferRecord) {
+    setEditingLineId(null);
+    setExpandedLineId(offer.client_request_line_id);
+    setShowCreateForm(false);
     setEditingOfferId(offer.id);
     setOfferFormLineId(offer.client_request_line_id);
     setOfferForm({
@@ -1101,10 +1160,10 @@ export function SolicitudDetalleClient({
       </section>
 
       <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
-        <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <div className={`${editingLineId || showCreateForm ? "mb-5" : ""} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
           <div>
             <h3 className="text-lg font-semibold text-stone-950">
-              {editingLineId ? "Editar partida" : "Nueva partida"}
+              {editingLineId ? "Editar partida" : "Agregar partida"}
             </h3>
             <p className="mt-1 text-sm text-stone-600">
               El producto es opcional para artículos que todavía no están en el
@@ -1120,10 +1179,25 @@ export function SolicitudDetalleClient({
             >
               Cancelar edición
             </button>
-          ) : null}
+          ) : (
+            <button
+              className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+              disabled={isSaving}
+              onClick={toggleCreateForm}
+              type="button"
+            >
+              {showCreateForm ? "Ocultar formulario" : "Agregar partida"}
+            </button>
+          )}
         </div>
 
-        <form className="grid gap-4 lg:grid-cols-3" onSubmit={handleSubmit}>
+        {editingLineId || showCreateForm ? (
+        <form className="grid gap-4 rounded-lg border border-stone-200 p-4 lg:grid-cols-3" onSubmit={handleSubmit}>
+          <div className="lg:col-span-3">
+            <h4 className="text-base font-semibold text-stone-950">
+              {editingLineId ? "Editar partida" : "Nuevo registro"}
+            </h4>
+          </div>
           <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
@@ -1303,10 +1377,21 @@ export function SolicitudDetalleClient({
                 ? "Guardando..."
                 : editingLineId
                   ? "Guardar cambios"
-                  : "Agregar partida"}
+                  : "Guardar"}
             </button>
+            {!editingLineId ? (
+              <button
+                className="h-11 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isSaving}
+                onClick={cancelCreate}
+                type="button"
+              >
+                Cancelar
+              </button>
+            ) : null}
           </div>
         </form>
+        ) : null}
       </section>
 
       <section className="rounded-lg border border-stone-200 bg-white shadow-sm">
@@ -1363,217 +1448,299 @@ export function SolicitudDetalleClient({
             Esta solicitud todavía no tiene partidas.
           </div>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="min-w-full divide-y divide-stone-200 text-left text-sm">
-              <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
-                <tr>
-                  <th className="px-5 py-3">Descripción</th>
-                  <th className="px-5 py-3">Producto</th>
-                  <th className="px-5 py-3">Cantidad</th>
-                  <th className="px-5 py-3">Prioridad</th>
-                  <th className="px-5 py-3">Estado</th>
-                  <th className="px-5 py-3">Notas</th>
-                  <th className="px-5 py-3 text-right">Acciones</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-stone-200 bg-white">
-                {lines.map((line) => {
-                  const lineOffers = offersByLineId.get(line.id) ?? [];
-                  const isOfferFormOpen = offerFormLineId === line.id;
+          <div className="grid gap-3 p-5">
+            {lines.map((line) => {
+              const lineOffers = offersByLineId.get(line.id) ?? [];
+              const featuredOffer = selectedOrBestOffer(lineOffers);
+              const isExpanded = expandedLineId === line.id;
+              const isOfferFormOpen = offerFormLineId === line.id;
 
-                  return (
-                    <Fragment key={line.id}>
-                      <tr>
-                        <td className="min-w-80 px-5 py-4">
-                          <p className="font-medium text-stone-950">
+              return (
+                <article
+                  className="rounded-lg border border-stone-200 bg-white shadow-sm"
+                  key={line.id}
+                >
+                  <div className="p-4">
+                    <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0 space-y-3">
+                        <div className="space-y-2">
+                          <p className="font-semibold text-stone-950">
                             {lineDescription(line)}
                           </p>
-                        </td>
-                        <td className="px-5 py-4 text-stone-700">
-                          {line.product_id
-                            ? productsById.get(line.product_id)?.name ??
-                              "Producto no disponible"
-                            : "Sin producto"}
-                        </td>
-                        <td className="px-5 py-4 text-stone-700">
-                          {formatQuantity(line.quantity)} {line.unit || ""}
-                        </td>
-                        <td className="px-5 py-4">
-                          <span
-                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                              line.priority === "muy urgente"
-                                ? "bg-red-50 text-red-700"
-                                : line.priority === "urgente"
-                                  ? "bg-amber-50 text-amber-700"
-                                  : "bg-emerald-50 text-emerald-800"
-                            }`}
-                          >
-                            {line.priority || "normal"}
-                          </span>
-                        </td>
-                        <td className="px-5 py-4">
-                          <span className="inline-flex rounded-full bg-stone-100 px-2.5 py-1 text-xs font-semibold text-stone-700">
-                            {line.status || "pendiente"}
-                          </span>
-                        </td>
-                        <td className="min-w-64 px-5 py-4 text-stone-700">
-                          {line.notes || "Sin notas"}
-                        </td>
-                        <td className="px-5 py-4">
-                          <div className="flex justify-end gap-2">
-                            <button
-                              className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              disabled={isSaving || isDeletingId === line.id}
-                              onClick={() => startEditing(line)}
-                              type="button"
-                            >
-                              Editar
-                            </button>
-                            <button
-                              className="h-9 rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              disabled={isSaving || isDeletingId === line.id}
-                              onClick={() => deleteLine(line)}
-                              type="button"
-                            >
-                              {isDeletingId === line.id
-                                ? "Eliminando..."
-                                : "Eliminar"}
-                            </button>
+                          <div className="flex flex-wrap gap-2 text-xs text-stone-600">
+                            <span className="rounded-full bg-stone-100 px-2.5 py-1 font-semibold text-stone-700">
+                              {formatQuantity(line.quantity)} {line.unit || ""}
+                            </span>
+                            <span className="rounded-full bg-stone-100 px-2.5 py-1 font-semibold text-stone-700">
+                              {line.status || "pendiente"}
+                            </span>
+                            <span className="rounded-full bg-stone-100 px-2.5 py-1 font-semibold text-stone-700">
+                              {lineOffers.length}{" "}
+                              {lineOffers.length === 1 ? "oferta" : "ofertas"}
+                            </span>
                           </div>
-                        </td>
-                      </tr>
-                      <tr className="bg-stone-50/70">
-                        <td className="px-5 py-5" colSpan={7}>
-                          <div className="space-y-4">
-                            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                              <div>
-                                <h4 className="text-sm font-semibold text-stone-950">
-                                  Opciones de proveedor
-                                </h4>
-                                <p className="mt-1 text-xs text-stone-600">
-                                  Supplier Offers para esta partida.
-                                </p>
-                              </div>
-                              <button
-                                className="h-9 rounded-md bg-emerald-800 px-3 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
-                                disabled={isSavingOffer}
-                                onClick={() => startAddingOffer(line)}
-                                type="button"
-                              >
-                                Agregar oferta
-                              </button>
-                            </div>
+                        </div>
+                        <div className="text-sm text-stone-700">
+                          {featuredOffer ? (
+                            <p>
+                              {featuredOffer.is_selected
+                                ? "Oferta seleccionada"
+                                : "Mejor oferta"}
+                              :{" "}
+                              <span className="font-semibold text-stone-950">
+                                {formatMoney(
+                                  featuredOffer.unit_price,
+                                  featuredOffer.currency,
+                                )}
+                              </span>{" "}
+                              <span className="text-stone-500">
+                                (
+                                {featuredOffer.supplier_id
+                                  ? suppliersById.get(featuredOffer.supplier_id)
+                                      ?.name ?? "Proveedor no disponible"
+                                  : "Sin proveedor"}
+                                )
+                              </span>
+                            </p>
+                          ) : (
+                            <p className="text-stone-500">
+                              Sin oferta seleccionada.
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                      <button
+                        aria-expanded={isExpanded}
+                        className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50"
+                        onClick={() => toggleLineDetails(line)}
+                        type="button"
+                      >
+                        {isExpanded ? (
+                          <ChevronUp aria-hidden="true" className="h-4 w-4" />
+                        ) : (
+                          <ChevronDown
+                            aria-hidden="true"
+                            className="h-4 w-4"
+                          />
+                        )}
+                        {isExpanded ? "Ocultar detalle" : "Ver detalle"}
+                      </button>
+                    </div>
+                  </div>
 
-                            {lineOffers.length === 0 ? (
-                              <p className="rounded-md border border-dashed border-stone-300 bg-white px-4 py-3 text-sm text-stone-600">
-                                Sin opciones de proveedor todavía.
-                              </p>
-                            ) : (
-                              <div className="grid gap-3">
-                                {lineOffers.map((offer) => (
-                                  <div
-                                    className={`rounded-md border bg-white p-4 ${
-                                      offer.is_selected
-                                        ? "border-emerald-300 ring-2 ring-emerald-100"
-                                        : "border-stone-200"
-                                    }`}
-                                    key={offer.id}
-                                  >
-                                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                                      <div className="min-w-0 space-y-2">
-                                        <div className="flex flex-wrap items-center gap-2">
-                                          <p className="font-semibold text-stone-950">
-                                            {offer.supplier_id
-                                              ? suppliersById.get(
-                                                  offer.supplier_id,
-                                                )?.name ??
-                                                "Proveedor no disponible"
-                                              : "Sin proveedor"}
-                                          </p>
-                                          {offer.is_selected ? (
-                                            <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                                              Seleccionada
-                                            </span>
-                                          ) : null}
-                                        </div>
-                                        <p className="text-sm text-stone-700">
-                                          {offer.supplier_description ||
-                                            lineDescription(line)}
-                                        </p>
-                                        <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-stone-600">
-                                          <span>
-                                            Precio:{" "}
-                                            <strong className="text-stone-900">
-                                              {formatMoney(
-                                                offer.unit_price,
-                                                offer.currency,
-                                              )}
-                                            </strong>
-                                          </span>
-                                          <span>
-                                            Entrega:{" "}
-                                            {offer.lead_time_days
-                                              ? `${offer.lead_time_days} días`
-                                              : "Sin dato"}
-                                          </span>
-                                          <span>
-                                            MOQ:{" "}
-                                            {offer.minimum_order_quantity ??
-                                              "Sin dato"}
-                                          </span>
-                                          <span>
-                                            Vigencia:{" "}
-                                            {formatDate(offer.valid_until)}
-                                          </span>
-                                        </div>
-                                        {offer.notes ? (
-                                          <p className="text-xs text-stone-500">
-                                            {offer.notes}
-                                          </p>
-                                        ) : null}
-                                      </div>
-                                      <div className="flex flex-wrap gap-2 lg:justify-end">
-                                        <button
-                                          className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                          disabled={
-                                            isSelectingOfferId === offer.id ||
-                                            Boolean(offer.is_selected)
-                                          }
-                                          onClick={() => selectOffer(offer)}
-                                          type="button"
-                                        >
-                                          {isSelectingOfferId === offer.id
-                                            ? "Seleccionando..."
-                                            : "Elegir"}
-                                        </button>
-                                        <button
-                                          className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                          disabled={isSavingOffer}
-                                          onClick={() => startEditingOffer(offer)}
-                                          type="button"
-                                        >
-                                          Editar
-                                        </button>
-                                        <button
-                                          className="h-9 rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                          disabled={
-                                            isDeletingOfferId === offer.id
-                                          }
-                                          onClick={() => deleteOffer(offer)}
-                                          type="button"
-                                        >
-                                          {isDeletingOfferId === offer.id
-                                            ? "Eliminando..."
-                                            : "Eliminar"}
-                                        </button>
-                                      </div>
-                                    </div>
+                  {isExpanded ? (
+                    <div className="space-y-5 border-t border-stone-200 bg-stone-50/70 p-4">
+                      <div className="grid gap-4 text-sm md:grid-cols-2 lg:grid-cols-4">
+                        <div className="md:col-span-2 lg:col-span-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                            Descripción
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap text-stone-800">
+                            {lineDescription(line)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                            Producto
+                          </p>
+                          <p className="mt-1 text-stone-800">
+                            {line.product_id
+                              ? productsById.get(line.product_id)?.name ??
+                                "Producto no disponible"
+                              : "Sin producto"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                            Cantidad
+                          </p>
+                          <p className="mt-1 text-stone-800">
+                            {formatQuantity(line.quantity)} {line.unit || ""}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                            Prioridad
+                          </p>
+                          <p className="mt-1">
+                            <span
+                              className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
+                                line.priority === "muy urgente"
+                                  ? "bg-red-50 text-red-700"
+                                  : line.priority === "urgente"
+                                    ? "bg-amber-50 text-amber-700"
+                                    : "bg-emerald-50 text-emerald-800"
+                              }`}
+                            >
+                              {line.priority || "normal"}
+                            </span>
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                            Estado
+                          </p>
+                          <p className="mt-1">
+                            <span className="inline-flex rounded-full bg-white px-2.5 py-1 text-xs font-semibold text-stone-700">
+                              {line.status || "pendiente"}
+                            </span>
+                          </p>
+                        </div>
+                        <div className="md:col-span-2 lg:col-span-4">
+                          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                            Notas
+                          </p>
+                          <p className="mt-1 whitespace-pre-wrap text-stone-800">
+                            {line.notes || "Sin notas"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                        <div>
+                          <h4 className="text-sm font-semibold text-stone-950">
+                            Opciones de proveedor
+                          </h4>
+                          <p className="mt-1 text-xs text-stone-600">
+                            Ofertas de proveedor para esta partida.
+                          </p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={isSaving || isDeletingId === line.id}
+                            onClick={() => startEditing(line)}
+                            type="button"
+                          >
+                            Editar
+                          </button>
+                          <button
+                            className="h-9 rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={isSaving || isDeletingId === line.id}
+                            onClick={() => deleteLine(line)}
+                            type="button"
+                          >
+                            {isDeletingId === line.id
+                              ? "Eliminando..."
+                              : "Eliminar"}
+                          </button>
+                          <button
+                            className="h-9 rounded-md bg-emerald-800 px-3 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+                            disabled={isSavingOffer}
+                            onClick={() => startAddingOffer(line)}
+                            type="button"
+                          >
+                            Agregar oferta de proveedor
+                          </button>
+                        </div>
+                      </div>
+
+                      {lineOffers.length === 0 ? (
+                        <p className="rounded-md border border-dashed border-stone-300 bg-white px-4 py-3 text-sm text-stone-600">
+                          Sin opciones de proveedor todavía.
+                        </p>
+                      ) : (
+                        <div className="grid gap-3">
+                          {lineOffers.map((offer) => (
+                            <div
+                              className={`rounded-md border bg-white p-4 ${
+                                offer.is_selected
+                                  ? "border-emerald-300 ring-2 ring-emerald-100"
+                                  : "border-stone-200"
+                              }`}
+                              key={offer.id}
+                            >
+                              <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                                <div className="min-w-0 space-y-2">
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <p className="font-semibold text-stone-950">
+                                      {offer.supplier_id
+                                        ? suppliersById.get(offer.supplier_id)
+                                            ?.name ??
+                                          "Proveedor no disponible"
+                                        : "Sin proveedor"}
+                                    </p>
+                                    {offer.is_selected ? (
+                                      <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+                                        Seleccionada
+                                      </span>
+                                    ) : null}
                                   </div>
-                                ))}
+                                  <p className="text-sm text-stone-700">
+                                    {offer.supplier_description ||
+                                      lineDescription(line)}
+                                  </p>
+                                  <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-stone-600">
+                                    <span>
+                                      Precio:{" "}
+                                      <strong className="text-stone-900">
+                                        {formatMoney(
+                                          offer.unit_price,
+                                          offer.currency,
+                                        )}
+                                      </strong>
+                                    </span>
+                                    <span>
+                                      Entrega:{" "}
+                                      {offer.lead_time_days
+                                        ? `${offer.lead_time_days} días`
+                                        : "Sin dato"}
+                                    </span>
+                                    <span>
+                                      MOQ:{" "}
+                                      {offer.minimum_order_quantity ??
+                                        "Sin dato"}
+                                    </span>
+                                    <span>
+                                      Vigencia: {formatDate(offer.valid_until)}
+                                    </span>
+                                  </div>
+                                  {offer.notes ? (
+                                    <p className="text-xs text-stone-500">
+                                      {offer.notes}
+                                    </p>
+                                  ) : null}
+                                </div>
+                                <div className="flex flex-wrap gap-2 lg:justify-end">
+                                  <button
+                                    className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    disabled={
+                                      isSelectingOfferId === offer.id ||
+                                      Boolean(offer.is_selected)
+                                    }
+                                    onClick={() => selectOffer(offer)}
+                                    type="button"
+                                  >
+                                    {isSelectingOfferId === offer.id
+                                      ? "Seleccionando..."
+                                      : "Elegir"}
+                                  </button>
+                                  <button
+                                    className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    disabled={isSavingOffer}
+                                    onClick={() => startEditingOffer(offer)}
+                                    type="button"
+                                  >
+                                    Editar
+                                  </button>
+                                  <button
+                                    className="h-9 rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                    disabled={isDeletingOfferId === offer.id}
+                                    onClick={() => deleteOffer(offer)}
+                                    type="button"
+                                  >
+                                    {isDeletingOfferId === offer.id
+                                      ? "Eliminando..."
+                                      : "Eliminar"}
+                                  </button>
+                                </div>
                               </div>
-                            )}
+                            </div>
+                          ))}
+                        </div>
+                      )}
 
-                            {isOfferFormOpen ? (
+                      {isOfferFormOpen ? (
                               <form
                                 className="grid gap-4 rounded-md border border-stone-200 bg-white p-4 lg:grid-cols-4"
                                 onSubmit={(event) =>
@@ -1756,7 +1923,7 @@ export function SolicitudDetalleClient({
                                       ? "Guardando..."
                                       : editingOfferId
                                         ? "Guardar oferta"
-                                        : "Agregar oferta"}
+                                        : "Guardar"}
                                   </button>
                                   <button
                                     className="h-10 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -1767,16 +1934,13 @@ export function SolicitudDetalleClient({
                                     Cancelar
                                   </button>
                                 </div>
-                              </form>
-                            ) : null}
-                          </div>
-                        </td>
-                      </tr>
-                    </Fragment>
-                  );
-                })}
-              </tbody>
-            </table>
+                            </form>
+                          ) : null}
+                    </div>
+                  ) : null}
+                </article>
+              );
+            })}
           </div>
         )}
       </section>
