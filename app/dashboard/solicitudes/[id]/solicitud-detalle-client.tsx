@@ -74,6 +74,14 @@ type OfferFormState = {
   notes: string;
 };
 
+type QuickSupplierFormState = {
+  name: string;
+  contact_name: string;
+  phone: string;
+  email: string;
+  notes: string;
+};
+
 type SolicitudDetalleClientProps = {
   requestId: string;
 };
@@ -115,6 +123,14 @@ const emptyOfferForm: OfferFormState = {
   lead_time_days: "",
   minimum_order_quantity: "",
   valid_until: "",
+  notes: "",
+};
+
+const emptyQuickSupplierForm: QuickSupplierFormState = {
+  name: "",
+  contact_name: "",
+  phone: "",
+  email: "",
   notes: "",
 };
 
@@ -226,6 +242,11 @@ export function SolicitudDetalleClient({
   const [form, setForm] = useState<LineFormState>(emptyLineForm);
   const [offerForm, setOfferForm] = useState<OfferFormState>(emptyOfferForm);
   const [offerFormLineId, setOfferFormLineId] = useState<string | null>(null);
+  const [quickSupplierForm, setQuickSupplierForm] =
+    useState<QuickSupplierFormState>(emptyQuickSupplierForm);
+  const [quickSupplierLineId, setQuickSupplierLineId] = useState<string | null>(
+    null,
+  );
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [isDeletingOfferId, setIsDeletingOfferId] = useState<string | null>(
     null,
@@ -233,6 +254,7 @@ export function SolicitudDetalleClient({
   const [isLoading, setIsLoading] = useState(true);
   const [isGeneratingQuotation, setIsGeneratingQuotation] = useState(false);
   const [isSavingOffer, setIsSavingOffer] = useState(false);
+  const [isSavingSupplier, setIsSavingSupplier] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [isSelectingOfferId, setIsSelectingOfferId] = useState<string | null>(
     null,
@@ -242,6 +264,7 @@ export function SolicitudDetalleClient({
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [request, setRequest] = useState<RequestRecord | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [targetMargin, setTargetMargin] = useState(defaultTargetMargin);
   const [warningMessage, setWarningMessage] = useState("");
@@ -281,6 +304,27 @@ export function SolicitudDetalleClient({
 
     return nextOffersByLineId;
   }, [offers]);
+
+  const loadSuppliers = useCallback(
+    async (activeCompanyId: string) => {
+      const { data, error } = await supabase
+        .from("suppliers")
+        .select("id,name")
+        .eq("company_id", activeCompanyId)
+        .order("name", { ascending: true });
+
+      if (error) {
+        setErrorMessage(error.message);
+        setSuppliers([]);
+        return [];
+      }
+
+      const loadedSuppliers = (data ?? []) as SupplierRecord[];
+      setSuppliers(loadedSuppliers);
+      return loadedSuppliers;
+    },
+    [supabase],
+  );
 
   const loadOffers = useCallback(
     async (activeCompanyId: string, lineIds: string[]) => {
@@ -397,7 +441,7 @@ export function SolicitudDetalleClient({
 
       setRequest(requestData as RequestRecord);
 
-      const [clientsResponse, contactsResponse, productsResponse, suppliersResponse] =
+      const [clientsResponse, contactsResponse, productsResponse] =
         await Promise.all([
           supabase
             .from("clients")
@@ -415,18 +459,12 @@ export function SolicitudDetalleClient({
             .eq("company_id", activeCompanyId)
             .eq("active", true)
             .order("name", { ascending: true }),
-          supabase
-            .from("suppliers")
-            .select("id,name")
-            .eq("company_id", activeCompanyId)
-            .order("name", { ascending: true }),
         ]);
 
       const firstError =
         clientsResponse.error ??
         contactsResponse.error ??
-        productsResponse.error ??
-        suppliersResponse.error;
+        productsResponse.error;
 
       if (firstError) {
         setErrorMessage(firstError.message);
@@ -437,14 +475,14 @@ export function SolicitudDetalleClient({
       setClients((clientsResponse.data ?? []) as ClientRecord[]);
       setContacts((contactsResponse.data ?? []) as ContactRecord[]);
       setProducts((productsResponse.data ?? []) as ProductRecord[]);
-      setSuppliers((suppliersResponse.data ?? []) as SupplierRecord[]);
+      await loadSuppliers(activeCompanyId);
 
       await loadLines(activeCompanyId);
       setIsLoading(false);
     }
 
     loadInitialData();
-  }, [loadLines, requestId, supabase]);
+  }, [loadLines, loadSuppliers, requestId, supabase]);
 
   function lineDescription(line: ClientRequestLineRecord) {
     const productName = line.product_id
@@ -658,11 +696,13 @@ export function SolicitudDetalleClient({
     setShowCreateForm(false);
     setEditingOfferId(null);
     setOfferFormLineId(line.id);
+    cancelQuickSupplier();
     setOfferForm({
       ...emptyOfferForm,
       supplier_description: lineDescription(line),
     });
     setErrorMessage("");
+    setSuccessMessage("");
   }
 
   function startEditingOffer(offer: SupplierOfferRecord) {
@@ -671,6 +711,7 @@ export function SolicitudDetalleClient({
     setShowCreateForm(false);
     setEditingOfferId(offer.id);
     setOfferFormLineId(offer.client_request_line_id);
+    cancelQuickSupplier();
     setOfferForm({
       currency: offer.currency || "MXN",
       lead_time_days:
@@ -692,13 +733,83 @@ export function SolicitudDetalleClient({
       valid_until: offer.valid_until ?? "",
     });
     setErrorMessage("");
+    setSuccessMessage("");
   }
 
   function cancelOfferEditing() {
     setEditingOfferId(null);
     setOfferFormLineId(null);
     setOfferForm(emptyOfferForm);
+    cancelQuickSupplier();
     setErrorMessage("");
+  }
+
+  function toggleQuickSupplier(lineId: string) {
+    if (quickSupplierLineId === lineId) {
+      cancelQuickSupplier();
+      return;
+    }
+
+    setQuickSupplierLineId(lineId);
+    setQuickSupplierForm(emptyQuickSupplierForm);
+    setErrorMessage("");
+    setSuccessMessage("");
+  }
+
+  function cancelQuickSupplier() {
+    setQuickSupplierLineId(null);
+    setQuickSupplierForm(emptyQuickSupplierForm);
+  }
+
+  async function saveQuickSupplier(lineId: string) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      setSuccessMessage("");
+      return;
+    }
+
+    const supplierName = quickSupplierForm.name.trim();
+
+    if (!supplierName) {
+      setErrorMessage("El nombre del proveedor es obligatorio.");
+      setSuccessMessage("");
+      return;
+    }
+
+    setIsSavingSupplier(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const { data, error } = await supabase
+      .from("suppliers")
+      .insert({
+        company_id: companyId,
+        contact_name: cleanOptionalValue(quickSupplierForm.contact_name),
+        email: cleanOptionalValue(quickSupplierForm.email),
+        name: supplierName,
+        notes: cleanOptionalValue(quickSupplierForm.notes),
+        phone: cleanOptionalValue(quickSupplierForm.phone),
+      })
+      .select("id,name")
+      .single();
+
+    setIsSavingSupplier(false);
+
+    if (error || !data) {
+      setErrorMessage(error?.message ?? "No se pudo guardar el proveedor.");
+      return;
+    }
+
+    await loadSuppliers(companyId);
+    setOfferForm((currentForm) => ({
+      ...currentForm,
+      supplier_id: data.id,
+    }));
+    setQuickSupplierLineId((currentLineId) =>
+      currentLineId === lineId ? null : currentLineId,
+    );
+    setQuickSupplierForm(emptyQuickSupplierForm);
+    setSuccessMessage("Proveedor agregado.");
   }
 
   async function handleOfferSubmit(
@@ -1057,6 +1168,12 @@ export function SolicitudDetalleClient({
       {warningMessage ? (
         <div className="rounded-lg border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
           {warningMessage}
+        </div>
+      ) : null}
+
+      {successMessage ? (
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
+          {successMessage}
         </div>
       ) : null}
 
@@ -1454,6 +1571,7 @@ export function SolicitudDetalleClient({
               const featuredOffer = selectedOrBestOffer(lineOffers);
               const isExpanded = expandedLineId === line.id;
               const isOfferFormOpen = offerFormLineId === line.id;
+              const isQuickSupplierOpen = quickSupplierLineId === line.id;
 
               return (
                 <article
@@ -1747,36 +1865,205 @@ export function SolicitudDetalleClient({
                                   handleOfferSubmit(line, event)
                                 }
                               >
-                                <div className="space-y-2">
-                                  <label
-                                    className="text-sm font-medium text-stone-800"
-                                    htmlFor={`supplier_id_${line.id}`}
-                                  >
-                                    Proveedor
-                                  </label>
-                                  <select
-                                    className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                                    disabled={isSavingOffer}
-                                    id={`supplier_id_${line.id}`}
-                                    onChange={(event) =>
-                                      setOfferForm((currentForm) => ({
-                                        ...currentForm,
-                                        supplier_id: event.target.value,
-                                      }))
-                                    }
-                                    required
-                                    value={offerForm.supplier_id}
-                                  >
-                                    <option value="">Selecciona proveedor</option>
-                                    {suppliers.map((supplier) => (
-                                      <option
-                                        key={supplier.id}
-                                        value={supplier.id}
+                                <div className="space-y-2 lg:col-span-4">
+                                  <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                                    <div className="flex-1 space-y-2">
+                                      <label
+                                        className="text-sm font-medium text-stone-800"
+                                        htmlFor={`supplier_id_${line.id}`}
                                       >
-                                        {supplier.name}
-                                      </option>
-                                    ))}
-                                  </select>
+                                        Proveedor
+                                      </label>
+                                      <select
+                                        className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                        disabled={
+                                          isSavingOffer || isSavingSupplier
+                                        }
+                                        id={`supplier_id_${line.id}`}
+                                        onChange={(event) =>
+                                          setOfferForm((currentForm) => ({
+                                            ...currentForm,
+                                            supplier_id: event.target.value,
+                                          }))
+                                        }
+                                        required
+                                        value={offerForm.supplier_id}
+                                      >
+                                        <option value="">
+                                          Selecciona proveedor
+                                        </option>
+                                        {suppliers.map((supplier) => (
+                                          <option
+                                            key={supplier.id}
+                                            value={supplier.id}
+                                          >
+                                            {supplier.name}
+                                          </option>
+                                        ))}
+                                      </select>
+                                    </div>
+                                    <button
+                                      aria-expanded={isQuickSupplierOpen}
+                                      className="h-10 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                      disabled={
+                                        isSavingOffer || isSavingSupplier
+                                      }
+                                      onClick={() =>
+                                        toggleQuickSupplier(line.id)
+                                      }
+                                      type="button"
+                                    >
+                                      Nuevo proveedor
+                                    </button>
+                                  </div>
+
+                                  {isQuickSupplierOpen ? (
+                                    <div className="grid gap-3 rounded-md border border-stone-200 bg-stone-50 p-4 md:grid-cols-2 lg:grid-cols-4">
+                                      <div className="space-y-2 md:col-span-2 lg:col-span-4">
+                                        <h5 className="text-sm font-semibold text-stone-950">
+                                          Nuevo proveedor
+                                        </h5>
+                                      </div>
+                                      <div className="space-y-2">
+                                        <label
+                                          className="text-sm font-medium text-stone-800"
+                                          htmlFor={`quick_supplier_name_${line.id}`}
+                                        >
+                                          Nombre
+                                        </label>
+                                        <input
+                                          className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                          disabled={isSavingSupplier}
+                                          id={`quick_supplier_name_${line.id}`}
+                                          onChange={(event) =>
+                                            setQuickSupplierForm(
+                                              (currentForm) => ({
+                                                ...currentForm,
+                                                name: event.target.value,
+                                              }),
+                                            )
+                                          }
+                                          required
+                                          type="text"
+                                          value={quickSupplierForm.name}
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <label
+                                          className="text-sm font-medium text-stone-800"
+                                          htmlFor={`quick_supplier_contact_${line.id}`}
+                                        >
+                                          Contacto
+                                        </label>
+                                        <input
+                                          className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                          disabled={isSavingSupplier}
+                                          id={`quick_supplier_contact_${line.id}`}
+                                          onChange={(event) =>
+                                            setQuickSupplierForm(
+                                              (currentForm) => ({
+                                                ...currentForm,
+                                                contact_name:
+                                                  event.target.value,
+                                              }),
+                                            )
+                                          }
+                                          type="text"
+                                          value={quickSupplierForm.contact_name}
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <label
+                                          className="text-sm font-medium text-stone-800"
+                                          htmlFor={`quick_supplier_phone_${line.id}`}
+                                        >
+                                          Teléfono
+                                        </label>
+                                        <input
+                                          className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                          disabled={isSavingSupplier}
+                                          id={`quick_supplier_phone_${line.id}`}
+                                          onChange={(event) =>
+                                            setQuickSupplierForm(
+                                              (currentForm) => ({
+                                                ...currentForm,
+                                                phone: event.target.value,
+                                              }),
+                                            )
+                                          }
+                                          type="tel"
+                                          value={quickSupplierForm.phone}
+                                        />
+                                      </div>
+                                      <div className="space-y-2">
+                                        <label
+                                          className="text-sm font-medium text-stone-800"
+                                          htmlFor={`quick_supplier_email_${line.id}`}
+                                        >
+                                          Correo
+                                        </label>
+                                        <input
+                                          className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                          disabled={isSavingSupplier}
+                                          id={`quick_supplier_email_${line.id}`}
+                                          onChange={(event) =>
+                                            setQuickSupplierForm(
+                                              (currentForm) => ({
+                                                ...currentForm,
+                                                email: event.target.value,
+                                              }),
+                                            )
+                                          }
+                                          type="email"
+                                          value={quickSupplierForm.email}
+                                        />
+                                      </div>
+                                      <div className="space-y-2 md:col-span-2 lg:col-span-4">
+                                        <label
+                                          className="text-sm font-medium text-stone-800"
+                                          htmlFor={`quick_supplier_notes_${line.id}`}
+                                        >
+                                          Notas
+                                        </label>
+                                        <textarea
+                                          className="min-h-20 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                          disabled={isSavingSupplier}
+                                          id={`quick_supplier_notes_${line.id}`}
+                                          onChange={(event) =>
+                                            setQuickSupplierForm(
+                                              (currentForm) => ({
+                                                ...currentForm,
+                                                notes: event.target.value,
+                                              }),
+                                            )
+                                          }
+                                          value={quickSupplierForm.notes}
+                                        />
+                                      </div>
+                                      <div className="flex flex-col gap-2 sm:flex-row md:col-span-2 lg:col-span-4">
+                                        <button
+                                          className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+                                          disabled={isSavingSupplier}
+                                          onClick={() =>
+                                            saveQuickSupplier(line.id)
+                                          }
+                                          type="button"
+                                        >
+                                          {isSavingSupplier
+                                            ? "Guardando..."
+                                            : "Guardar proveedor"}
+                                        </button>
+                                        <button
+                                          className="h-10 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                          disabled={isSavingSupplier}
+                                          onClick={cancelQuickSupplier}
+                                          type="button"
+                                        >
+                                          Cancelar
+                                        </button>
+                                      </div>
+                                    </div>
+                                  ) : null}
                                 </div>
 
                                 <div className="space-y-2 lg:col-span-3">
