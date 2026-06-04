@@ -19,11 +19,14 @@ type SupplierPriceRecord = {
   id: string;
   product_id: string | null;
   product_description: string | null;
+  supplier_id: string | null;
   unit: string | null;
   cost: number | string | null;
   quoted_at: string | null;
   valid_until: string | null;
+  active: boolean | null;
   notes: string | null;
+  product?: SupplierPriceProduct | SupplierPriceProduct[] | null;
   products: SupplierPriceProduct | SupplierPriceProduct[] | null;
 };
 
@@ -32,13 +35,18 @@ type ProveedorDetalleClientProps = {
 };
 
 type SupplierPriceProduct = {
+  id: string;
   category: string | null;
   image_url: string | null;
   name: string | null;
   unit: string | null;
 };
 
-type PriceStatus = "linked" | "unlinked" | "missing-product";
+type PriceStatus =
+  | "linked"
+  | "missing-description"
+  | "missing-product"
+  | "unlinked";
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -59,7 +67,9 @@ function formatMoney(value: number | string | null | undefined) {
 }
 
 function getPriceProduct(price: SupplierPriceRecord) {
-  return Array.isArray(price.products) ? price.products[0] : price.products;
+  const product = price.products ?? price.product ?? null;
+
+  return Array.isArray(product) ? product[0] : product;
 }
 
 function getPriceStatus(price: SupplierPriceRecord): PriceStatus {
@@ -73,7 +83,11 @@ function getPriceStatus(price: SupplierPriceRecord): PriceStatus {
     return "missing-product";
   }
 
-  return "unlinked";
+  if (price.product_description) {
+    return "unlinked";
+  }
+
+  return "missing-description";
 }
 
 function getPriceDisplayName(price: SupplierPriceRecord) {
@@ -91,6 +105,10 @@ function getStatusLabel(status: PriceStatus) {
     return "Producto no encontrado";
   }
 
+  if (status === "missing-description") {
+    return "Sin descripción";
+  }
+
   return "Sin vincular";
 }
 
@@ -101,6 +119,10 @@ function getStatusClasses(status: PriceStatus) {
 
   if (status === "missing-product") {
     return "bg-red-50 text-red-700";
+  }
+
+  if (status === "missing-description") {
+    return "bg-stone-100 text-stone-600";
   }
 
   return "bg-amber-50 text-amber-800";
@@ -167,7 +189,7 @@ export function ProveedorDetalleClient({
         supabase
           .from("supplier_prices")
           .select(
-            "id,product_id,product_description,cost,unit,quoted_at,valid_until,notes,products:product_id(name,category,unit,image_url)",
+            "id,product_id,product_description,supplier_id,cost,unit,quoted_at,valid_until,active,notes,products:product_id(id,name,category,unit,image_url)",
           )
           .eq("company_id", profile.company_id)
           .eq("supplier_id", supplierId)
@@ -261,6 +283,7 @@ export function ProveedorDetalleClient({
               product_id: productResponse.product.id,
               products: {
                 category: null,
+                id: productResponse.product.id,
                 image_url: null,
                 name: productResponse.product.name,
                 unit: currentPrice.unit,
@@ -344,6 +367,7 @@ export function ProveedorDetalleClient({
               product_id: product.id,
               products: {
                 category: product.category,
+                id: product.id,
                 image_url: product.image_url,
                 name: product.name,
                 unit: product.unit,
@@ -471,7 +495,7 @@ export function ProveedorDetalleClient({
                       </td>
                       <td className="px-5 py-4">
                         <div className="flex justify-end gap-2">
-                          {status === "unlinked" ? (
+                          {!price.product_id ? (
                             <>
                               <button
                                 className="h-9 rounded-md border border-stone-200 px-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -499,6 +523,15 @@ export function ProveedorDetalleClient({
                             >
                               Editar producto
                             </Link>
+                          ) : status === "missing-product" ? (
+                            <button
+                              className="h-9 rounded-md border border-stone-200 px-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              disabled={catalogingPriceId === price.id}
+                              onClick={() => linkPriceToExistingProduct(price)}
+                              type="button"
+                            >
+                              Vincular otro producto
+                            </button>
                           ) : (
                             <span className="text-sm text-stone-500">
                               Sin acciones

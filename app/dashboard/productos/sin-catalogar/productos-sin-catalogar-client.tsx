@@ -15,6 +15,7 @@ type SupplierPriceRecord = {
   unit: string | null;
   quoted_at: string | null;
   notes: string | null;
+  supplier?: { name: string | null }[] | { name: string | null } | null;
   suppliers: { name: string | null }[] | null;
 };
 
@@ -46,6 +47,13 @@ function priceMatchesSearch(price: SupplierPriceRecord, searchValue: string) {
   return [price.product_description, price.suppliers?.[0]?.name].some((value) =>
     value?.toLowerCase().includes(normalizedSearch),
   );
+}
+
+function getPriceSupplierName(price: SupplierPriceRecord) {
+  const supplier = price.suppliers ?? price.supplier ?? null;
+  const supplierRecord = Array.isArray(supplier) ? supplier[0] : supplier;
+
+  return supplierRecord?.name || (price.supplier_id ? "Proveedor no encontrado" : "Sin proveedor");
 }
 
 export function ProductosSinCatalogarClient() {
@@ -287,7 +295,7 @@ export function ProductosSinCatalogarClient() {
                       </span>
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {price.suppliers?.[0]?.name || "Proveedor no disponible"}
+                      {getPriceSupplierName(price)}
                     </td>
                     <td className="px-5 py-4 text-right text-stone-700">
                       {formatMoney(price.cost)}

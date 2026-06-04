@@ -912,7 +912,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
               const isExpanded = expandedLineIds.has(line.id);
               const supplierName = line.supplier_id
                 ? suppliersById.get(line.supplier_id)?.name ??
-                  "Proveedor no disponible"
+                  "Proveedor no encontrado"
                 : "Sin proveedor";
 
               return (
@@ -957,7 +957,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                         <p className="mt-1 text-stone-800">
                           {line.product_id
                             ? productsById.get(line.product_id)?.name ??
-                              "Producto no disponible"
+                              "Producto no encontrado"
                             : "Sin producto"}
                         </p>
                       </div>
@@ -1036,7 +1036,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
               const runLines = runLinesByRunId.get(run.id) ?? [];
               const supplierName = run.supplier_id
                 ? suppliersById.get(run.supplier_id)?.name ??
-                  "Proveedor no disponible"
+                  "Proveedor no encontrado"
                 : "Sin proveedor";
 
               return (

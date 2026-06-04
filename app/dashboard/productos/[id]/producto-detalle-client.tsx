@@ -16,18 +16,29 @@ type ProductRecord = {
 
 type SupplierPriceRecord = {
   id: string;
+  product_id: string | null;
+  product_description: string | null;
+  supplier_id: string | null;
   cost: number | string | null;
   unit: string | null;
   quoted_at: string | null;
   valid_until: string | null;
   active: boolean | null;
   notes: string | null;
-  suppliers: { name: string | null }[] | null;
+  supplier?: SupplierPriceSupplier | SupplierPriceSupplier[] | null;
+  suppliers: SupplierPriceSupplier | SupplierPriceSupplier[] | null;
 };
 
 type SupplierRecord = {
   id: string;
   name: string;
+};
+
+type SupplierPriceSupplier = {
+  id: string;
+  email: string | null;
+  name: string | null;
+  phone: string | null;
 };
 
 type SupplierPriceFormState = {
@@ -110,6 +121,18 @@ function formatMoney(value: number | string | null | undefined) {
   }).format(Number.isFinite(parsedValue) ? parsedValue : 0);
 }
 
+function getPriceSupplier(price: SupplierPriceRecord) {
+  const supplier = price.suppliers ?? price.supplier ?? null;
+
+  return Array.isArray(supplier) ? supplier[0] : supplier;
+}
+
+function getSupplierDisplayName(price: SupplierPriceRecord) {
+  const supplier = getPriceSupplier(price);
+
+  return supplier?.name || (price.supplier_id ? "Proveedor no encontrado" : "Sin proveedor");
+}
+
 export function ProductoDetalleClient({
   productId,
 }: ProductoDetalleClientProps) {
@@ -122,12 +145,18 @@ export function ProductoDetalleClient({
   const [isLoading, setIsLoading] = useState(true);
   const [isProductSaving, setIsProductSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [linkingSupplierPriceId, setLinkingSupplierPriceId] = useState<
+    string | null
+  >(null);
   const [prices, setPrices] = useState<SupplierPriceRecord[]>([]);
   const [product, setProduct] = useState<ProductRecord | null>(null);
   const [productForm, setProductForm] =
     useState<ProductFormState>(emptyProductForm);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [supplierLinkSelections, setSupplierLinkSelections] = useState<
+    Record<string, string>
+  >({});
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
 
   const loadSupplierPrices = useCallback(
@@ -135,7 +164,7 @@ export function ProductoDetalleClient({
       const { data, error } = await supabase
         .from("supplier_prices")
         .select(
-          "id,cost,unit,quoted_at,valid_until,active,notes,suppliers(name)",
+          "id,product_id,product_description,supplier_id,cost,unit,quoted_at,valid_until,active,notes,suppliers:supplier_id(id,name,phone,email)",
         )
         .eq("company_id", activeCompanyId)
         .eq("product_id", productId)
@@ -361,6 +390,46 @@ export function ProductoDetalleClient({
     setSuccessMessage("Proveedor agregado al historial de precios.");
     setShowCreateForm(false);
     setForm(supplierPriceFormDefault(product?.unit));
+    await loadSupplierPrices(companyId);
+  }
+
+  async function linkPriceToSupplier(price: SupplierPriceRecord) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    const supplierId = supplierLinkSelections[price.id];
+
+    if (!supplierId) {
+      setErrorMessage("Selecciona un proveedor para vincular.");
+      return;
+    }
+
+    setLinkingSupplierPriceId(price.id);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const { error } = await supabase
+      .from("supplier_prices")
+      .update({ supplier_id: supplierId })
+      .eq("id", price.id)
+      .eq("company_id", companyId)
+      .eq("product_id", productId);
+
+    setLinkingSupplierPriceId(null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSuccessMessage("Proveedor vinculado al precio.");
+    setSupplierLinkSelections((currentSelections) => {
+      const nextSelections = { ...currentSelections };
+      delete nextSelections[price.id];
+      return nextSelections;
+    });
     await loadSupplierPrices(companyId);
   }
 
@@ -773,10 +842,73 @@ export function ProductoDetalleClient({
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-200 bg-white">
-                {prices.map((price) => (
+                {prices.map((price) => {
+                  const supplier = getPriceSupplier(price);
+                  const supplierName = getSupplierDisplayName(price);
+                  const hasMissingSupplier = Boolean(
+                    price.supplier_id && !supplier,
+                  );
+
+                  return (
                   <tr key={price.id}>
-                    <td className="px-5 py-4 font-medium text-stone-950">
-                      {price.suppliers?.[0]?.name || "Proveedor no disponible"}
+                    <td className="min-w-56 px-5 py-4 font-medium text-stone-950">
+                      <div className="space-y-2">
+                        <p>{supplierName}</p>
+                        {supplier ? (
+                          <Link
+                            className="inline-flex h-8 items-center rounded-md border border-emerald-200 px-3 text-xs font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
+                            href={`/dashboard/proveedores/${price.supplier_id}`}
+                          >
+                            Ver proveedor
+                          </Link>
+                        ) : hasMissingSupplier ? (
+                          <div className="flex flex-col gap-2 sm:flex-row">
+                            <select
+                              className="h-9 min-w-48 rounded-md border border-stone-300 bg-white px-3 text-xs text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                              disabled={
+                                linkingSupplierPriceId === price.id ||
+                                suppliers.length === 0
+                              }
+                              onChange={(event) =>
+                                setSupplierLinkSelections(
+                                  (currentSelections) => ({
+                                    ...currentSelections,
+                                    [price.id]: event.target.value,
+                                  }),
+                                )
+                              }
+                              value={supplierLinkSelections[price.id] ?? ""}
+                            >
+                              <option value="">
+                                {suppliers.length === 0
+                                  ? "No hay proveedores"
+                                  : "Selecciona proveedor"}
+                              </option>
+                              {suppliers.map((supplierOption) => (
+                                <option
+                                  key={supplierOption.id}
+                                  value={supplierOption.id}
+                                >
+                                  {supplierOption.name}
+                                </option>
+                              ))}
+                            </select>
+                            <button
+                              className="h-9 rounded-md border border-stone-200 px-3 text-xs font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              disabled={
+                                linkingSupplierPriceId === price.id ||
+                                suppliers.length === 0
+                              }
+                              onClick={() => linkPriceToSupplier(price)}
+                              type="button"
+                            >
+                              {linkingSupplierPriceId === price.id
+                                ? "Vinculando..."
+                                : "Vincular proveedor"}
+                            </button>
+                          </div>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-5 py-4 text-right text-stone-700">
                       {formatMoney(price.cost)}
@@ -807,7 +939,8 @@ export function ProductoDetalleClient({
                       </span>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>

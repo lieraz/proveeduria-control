@@ -1022,7 +1022,7 @@ export function CotizacionDetalleClient({
                       <td className="px-5 py-4 text-stone-700">
                         {line.supplier_id
                           ? suppliersById.get(line.supplier_id)?.name ??
-                            "Proveedor no disponible"
+                            "Proveedor no encontrado"
                           : "Sin proveedor"}
                       </td>
                       <td className="px-5 py-4 text-right text-stone-700">

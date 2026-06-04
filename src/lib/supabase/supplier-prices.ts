@@ -66,8 +66,7 @@ export async function linkSupplierPriceToProduct(
       .from("supplier_prices")
       .delete()
       .eq("id", input.id)
-      .eq("company_id", input.companyId)
-      .is("product_id", null);
+      .eq("company_id", input.companyId);
 
     if (deleteError) {
       return {
@@ -83,8 +82,7 @@ export async function linkSupplierPriceToProduct(
     .from("supplier_prices")
     .update({ product_id: input.productId })
     .eq("id", input.id)
-    .eq("company_id", input.companyId)
-    .is("product_id", null);
+    .eq("company_id", input.companyId);
 
   if (updateError) {
     return {

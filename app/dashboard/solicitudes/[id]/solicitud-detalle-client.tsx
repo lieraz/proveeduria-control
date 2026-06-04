@@ -1775,7 +1775,7 @@ export function SolicitudDetalleClient({
                                 (
                                 {featuredOffer.supplier_id
                                   ? suppliersById.get(featuredOffer.supplier_id)
-                                      ?.name ?? "Proveedor no disponible"
+                                      ?.name ?? "Proveedor no encontrado"
                                   : "Sin proveedor"}
                                 )
                               </span>
@@ -1824,7 +1824,7 @@ export function SolicitudDetalleClient({
                           <p className="mt-1 text-stone-800">
                             {line.product_id
                               ? productsById.get(line.product_id)?.name ??
-                                "Producto no disponible"
+                                "Producto no encontrado"
                               : "Sin producto"}
                           </p>
                         </div>
@@ -1935,7 +1935,7 @@ export function SolicitudDetalleClient({
                                       {offer.supplier_id
                                         ? suppliersById.get(offer.supplier_id)
                                             ?.name ??
-                                          "Proveedor no disponible"
+                                          "Proveedor no encontrado"
                                         : "Sin proveedor"}
                                     </p>
                                     {offer.is_selected ? (
