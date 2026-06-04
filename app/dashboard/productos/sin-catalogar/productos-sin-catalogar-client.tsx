@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
 import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
+import { linkSupplierPriceToProduct } from "@/src/lib/supabase/supplier-prices";
 import { createClient } from "@/src/lib/supabase/client";
 
 type SupplierPriceRecord = {
@@ -158,24 +159,31 @@ export function ProductosSinCatalogarClient() {
 
     if (productResponse.error) {
       setCatalogingPriceId(null);
-      setErrorMessage(productResponse.error.message);
+      setErrorMessage("No se pudo preparar el producto para vincularlo.");
       return;
     }
 
-    const { error: priceError } = await supabase
-      .from("supplier_prices")
-      .update({ product_id: productResponse.product.id })
-      .eq("id", price.id)
-      .eq("company_id", companyId);
+    const linkResponse = await linkSupplierPriceToProduct(supabase, {
+      companyId,
+      cost: price.cost,
+      id: price.id,
+      productId: productResponse.product.id,
+      quotedAt: price.quoted_at,
+      supplierId: price.supplier_id,
+    });
 
     setCatalogingPriceId(null);
 
-    if (priceError) {
-      setErrorMessage(priceError.message);
+    if (linkResponse.error) {
+      setErrorMessage(linkResponse.error.message);
       return;
     }
 
-    setSuccessMessage("Producto agregado al catálogo.");
+    setSuccessMessage(
+      linkResponse.duplicated
+        ? "Ya existía un registro equivalente. Se eliminó el duplicado."
+        : "Producto agregado al catálogo.",
+    );
     setPrices((currentPrices) =>
       currentPrices.filter((currentPrice) => currentPrice.id !== price.id),
     );

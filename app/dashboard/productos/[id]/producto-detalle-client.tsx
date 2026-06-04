@@ -10,6 +10,8 @@ type ProductRecord = {
   category: string | null;
   unit: string | null;
   description: string | null;
+  image_url: string | null;
+  active: boolean;
 };
 
 type SupplierPriceRecord = {
@@ -37,8 +39,26 @@ type SupplierPriceFormState = {
   notes: string;
 };
 
+type ProductFormState = {
+  name: string;
+  category: string;
+  unit: string;
+  description: string;
+  image_url: string;
+  active: boolean;
+};
+
 type ProductoDetalleClientProps = {
   productId: string;
+};
+
+const emptyProductForm: ProductFormState = {
+  active: true,
+  category: "",
+  description: "",
+  image_url: "",
+  name: "",
+  unit: "pieza",
 };
 
 function todayDateValue() {
@@ -53,6 +73,17 @@ function supplierPriceFormDefault(unit?: string | null): SupplierPriceFormState 
     quoted_at: todayDateValue(),
     valid_until: "",
     notes: "",
+  };
+}
+
+function productFormFromRecord(product: ProductRecord): ProductFormState {
+  return {
+    active: product.active,
+    category: product.category ?? "",
+    description: product.description ?? "",
+    image_url: product.image_url ?? "",
+    name: product.name,
+    unit: product.unit ?? "pieza",
   };
 }
 
@@ -89,9 +120,12 @@ export function ProductoDetalleClient({
     supplierPriceFormDefault(),
   );
   const [isLoading, setIsLoading] = useState(true);
+  const [isProductSaving, setIsProductSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [prices, setPrices] = useState<SupplierPriceRecord[]>([]);
   const [product, setProduct] = useState<ProductRecord | null>(null);
+  const [productForm, setProductForm] =
+    useState<ProductFormState>(emptyProductForm);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
@@ -160,7 +194,7 @@ export function ProductoDetalleClient({
       const [productResponse, suppliersResponse] = await Promise.all([
         supabase
           .from("products")
-          .select("id,name,category,unit,description")
+          .select("id,name,category,unit,description,image_url,active")
           .eq("company_id", profile.company_id)
           .eq("id", productId)
           .maybeSingle(),
@@ -185,7 +219,9 @@ export function ProductoDetalleClient({
         return;
       }
 
-      setProduct(productResponse.data as ProductRecord);
+      const loadedProduct = productResponse.data as ProductRecord;
+      setProduct(loadedProduct);
+      setProductForm(productFormFromRecord(loadedProduct));
       setForm(supplierPriceFormDefault(productResponse.data.unit));
       setSuppliers((suppliersResponse.data ?? []) as SupplierRecord[]);
       await loadSupplierPrices(profile.company_id);
@@ -207,6 +243,65 @@ export function ProductoDetalleClient({
     setErrorMessage("");
     setSuccessMessage("");
     setShowCreateForm(true);
+  }
+
+  async function handleProductSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    const name = productForm.name.trim();
+    const unit = productForm.unit.trim();
+
+    if (!name) {
+      setErrorMessage("El nombre del producto es obligatorio.");
+      return;
+    }
+
+    if (!unit) {
+      setErrorMessage("La unidad es obligatoria.");
+      return;
+    }
+
+    setIsProductSaving(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const payload = {
+      active: productForm.active,
+      category: cleanOptionalValue(productForm.category),
+      description: cleanOptionalValue(productForm.description),
+      image_url: cleanOptionalValue(productForm.image_url),
+      name,
+      unit,
+    };
+
+    const { data, error } = await supabase
+      .from("products")
+      .update(payload)
+      .eq("id", productId)
+      .eq("company_id", companyId)
+      .select("id,name,category,unit,description,image_url,active")
+      .single();
+
+    setIsProductSaving(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    const updatedProduct = data as ProductRecord;
+    setProduct(updatedProduct);
+    setProductForm(productFormFromRecord(updatedProduct));
+    setForm((currentForm) => ({
+      ...currentForm,
+      unit: currentForm.unit || updatedProduct.unit || "pieza",
+    }));
+    setSuccessMessage("Producto actualizado.");
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -290,46 +385,182 @@ export function ProductoDetalleClient({
         </div>
       ) : null}
 
-      <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+      <section className="rounded-lg border border-stone-200 bg-white shadow-sm">
         {isLoading || !product ? (
-          <p className="text-sm font-medium text-stone-600">
+          <p className="p-5 text-sm font-medium text-stone-600">
             Cargando producto...
           </p>
         ) : (
-          <div className="grid gap-4 md:grid-cols-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Producto
-              </p>
-              <p className="mt-1 text-base font-semibold text-stone-950">
-                {product.name}
-              </p>
+          <form className="space-y-5 p-5" onSubmit={handleProductSubmit}>
+            <div className="flex flex-col gap-4 border-b border-stone-200 pb-5 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-stone-950">
+                  Editar producto
+                </h3>
+                <p className="mt-1 text-sm text-stone-600">
+                  Actualiza la información del catálogo.
+                </p>
+              </div>
+              <span
+                className={`inline-flex w-fit rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                  productForm.active
+                    ? "border-emerald-200 bg-emerald-50 text-emerald-800"
+                    : "border-stone-200 bg-stone-100 text-stone-600"
+                }`}
+              >
+                {productForm.active ? "Activo" : "Inactivo"}
+              </span>
             </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Categoría
-              </p>
-              <p className="mt-1 text-sm text-stone-800">
-                {product.category || "Sin categoría"}
-              </p>
+
+            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-3">
+              <div className="space-y-2">
+                <label
+                  className="text-sm font-medium text-stone-800"
+                  htmlFor="product-name"
+                >
+                  Nombre
+                </label>
+                <input
+                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                  disabled={isProductSaving}
+                  id="product-name"
+                  onChange={(event) =>
+                    setProductForm((currentForm) => ({
+                      ...currentForm,
+                      name: event.target.value,
+                    }))
+                  }
+                  required
+                  value={productForm.name}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  className="text-sm font-medium text-stone-800"
+                  htmlFor="product-category"
+                >
+                  Categoría
+                </label>
+                <input
+                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                  disabled={isProductSaving}
+                  id="product-category"
+                  onChange={(event) =>
+                    setProductForm((currentForm) => ({
+                      ...currentForm,
+                      category: event.target.value,
+                    }))
+                  }
+                  value={productForm.category}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  className="text-sm font-medium text-stone-800"
+                  htmlFor="product-unit"
+                >
+                  Unidad
+                </label>
+                <input
+                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                  disabled={isProductSaving}
+                  id="product-unit"
+                  onChange={(event) =>
+                    setProductForm((currentForm) => ({
+                      ...currentForm,
+                      unit: event.target.value,
+                    }))
+                  }
+                  required
+                  value={productForm.unit}
+                />
+              </div>
+
+              <div className="space-y-2 md:col-span-2">
+                <label
+                  className="text-sm font-medium text-stone-800"
+                  htmlFor="product-image-url"
+                >
+                  URL de imagen
+                </label>
+                <input
+                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                  disabled={isProductSaving}
+                  id="product-image-url"
+                  onChange={(event) =>
+                    setProductForm((currentForm) => ({
+                      ...currentForm,
+                      image_url: event.target.value,
+                    }))
+                  }
+                  type="url"
+                  value={productForm.image_url}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <span className="text-sm font-medium text-stone-800">
+                  Estado
+                </span>
+                <label className="flex h-11 items-center gap-3 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800">
+                  <input
+                    checked={productForm.active}
+                    className="h-4 w-4 rounded border-stone-300 text-emerald-800 focus:ring-emerald-700"
+                    disabled={isProductSaving}
+                    onChange={(event) =>
+                      setProductForm((currentForm) => ({
+                        ...currentForm,
+                        active: event.target.checked,
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  Producto activo
+                </label>
+              </div>
+
+              <div className="space-y-2 md:col-span-2 lg:col-span-3">
+                <label
+                  className="text-sm font-medium text-stone-800"
+                  htmlFor="product-description"
+                >
+                  Descripción
+                </label>
+                <textarea
+                  className="min-h-24 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                  disabled={isProductSaving}
+                  id="product-description"
+                  onChange={(event) =>
+                    setProductForm((currentForm) => ({
+                      ...currentForm,
+                      description: event.target.value,
+                    }))
+                  }
+                  value={productForm.description}
+                />
+              </div>
             </div>
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Unidad
-              </p>
-              <p className="mt-1 text-sm text-stone-800">
-                {product.unit || "Sin unidad"}
-              </p>
+
+            <div className="flex flex-wrap gap-3">
+              <button
+                className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isProductSaving}
+                type="submit"
+              >
+                {isProductSaving ? "Guardando..." : "Guardar producto"}
+              </button>
+              <button
+                className="h-10 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isProductSaving}
+                onClick={() => setProductForm(productFormFromRecord(product))}
+                type="button"
+              >
+                Descartar cambios
+              </button>
             </div>
-            <div className="md:col-span-3">
-              <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Descripción
-              </p>
-              <p className="mt-1 text-sm text-stone-800">
-                {product.description || "Sin descripción"}
-              </p>
-            </div>
-          </div>
+          </form>
         )}
       </section>
 

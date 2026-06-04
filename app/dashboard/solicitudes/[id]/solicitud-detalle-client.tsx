@@ -39,6 +39,19 @@ type SupplierRecord = {
   name: string;
 };
 
+type SupplierPriceRecord = {
+  id: string;
+  product_id: string | null;
+  product_description: string | null;
+  item_description: string | null;
+  unit: string | null;
+  cost: number | string | null;
+  currency: string | null;
+  quoted_at: string | null;
+  valid_until: string | null;
+  products: { name: string | null }[] | null;
+};
+
 type RequestRecord = {
   id: string;
   folio: string | null;
@@ -190,6 +203,15 @@ function formatDate(value: string | null) {
   return date || value;
 }
 
+function inputDateValue(value: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  const [date] = value.split("T");
+  return date || value;
+}
+
 function formatQuantity(value: number | string | null | undefined) {
   if (value === null || value === undefined || value === "") {
     return "0";
@@ -227,6 +249,15 @@ function contactLabel(contact: ContactRecord | undefined) {
   return details.length > 0 ? `${name} - ${details.join(" - ")}` : name;
 }
 
+function supplierPriceDescription(price: SupplierPriceRecord) {
+  return (
+    price.products?.[0]?.name ||
+    price.product_description ||
+    price.item_description ||
+    "Producto sin descripción"
+  );
+}
+
 export function SolicitudDetalleClient({
   requestId,
 }: SolicitudDetalleClientProps) {
@@ -252,6 +283,7 @@ export function SolicitudDetalleClient({
     null,
   );
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoadingSupplierPrices, setIsLoadingSupplierPrices] = useState(false);
   const [isGeneratingQuotation, setIsGeneratingQuotation] = useState(false);
   const [isSavingOffer, setIsSavingOffer] = useState(false);
   const [isSavingSupplier, setIsSavingSupplier] = useState(false);
@@ -265,6 +297,10 @@ export function SolicitudDetalleClient({
   const [request, setRequest] = useState<RequestRecord | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
+  const [selectedSupplierPriceId, setSelectedSupplierPriceId] = useState("");
+  const [supplierPrices, setSupplierPrices] = useState<SupplierPriceRecord[]>(
+    [],
+  );
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [targetMargin, setTargetMargin] = useState(defaultTargetMargin);
   const [warningMessage, setWarningMessage] = useState("");
@@ -284,6 +320,10 @@ export function SolicitudDetalleClient({
   const suppliersById = useMemo(
     () => new Map(suppliers.map((supplier) => [supplier.id, supplier])),
     [suppliers],
+  );
+  const supplierPricesById = useMemo(
+    () => new Map(supplierPrices.map((price) => [price.id, price])),
+    [supplierPrices],
   );
   const offersByLineId = useMemo(() => {
     const nextOffersByLineId = new Map<string, SupplierOfferRecord[]>();
@@ -322,6 +362,34 @@ export function SolicitudDetalleClient({
       const loadedSuppliers = (data ?? []) as SupplierRecord[];
       setSuppliers(loadedSuppliers);
       return loadedSuppliers;
+    },
+    [supabase],
+  );
+
+  const loadSupplierPrices = useCallback(
+    async (activeCompanyId: string, supplierId: string) => {
+      setIsLoadingSupplierPrices(true);
+
+      const { data, error } = await supabase
+        .from("supplier_prices")
+        .select(
+          "id,product_id,product_description,item_description,unit,cost,currency,quoted_at,valid_until,products(name)",
+        )
+        .eq("company_id", activeCompanyId)
+        .eq("supplier_id", supplierId)
+        .eq("active", true)
+        .order("quoted_at", { ascending: false })
+        .order("created_at", { ascending: false });
+
+      setIsLoadingSupplierPrices(false);
+
+      if (error) {
+        setErrorMessage(error.message);
+        setSupplierPrices([]);
+        return;
+      }
+
+      setSupplierPrices((data ?? []) as SupplierPriceRecord[]);
     },
     [supabase],
   );
@@ -504,6 +572,82 @@ export function SolicitudDetalleClient({
       .sort((firstOffer, secondOffer) => {
         return toNumber(firstOffer.unit_price) - toNumber(secondOffer.unit_price);
       })[0];
+  }
+
+  function handleOfferSupplierChange(supplierId: string) {
+    setOfferForm((currentForm) => ({
+      ...currentForm,
+      supplier_id: supplierId,
+    }));
+    setSelectedSupplierPriceId("");
+    setSupplierPrices([]);
+
+    if (!companyId || !supplierId) {
+      setIsLoadingSupplierPrices(false);
+      return;
+    }
+
+    loadSupplierPrices(companyId, supplierId);
+  }
+
+  function supplierPriceOptionLabel(price: SupplierPriceRecord) {
+    return [
+      supplierPriceDescription(price),
+      formatMoney(price.cost, price.currency || offerForm.currency),
+      price.unit || "Sin unidad",
+      formatDate(price.quoted_at),
+    ].join(" - ");
+  }
+
+  async function handleSupplierPriceChange(
+    line: ClientRequestLineRecord,
+    supplierPriceId: string,
+  ) {
+    setSelectedSupplierPriceId(supplierPriceId);
+
+    const selectedPrice = supplierPricesById.get(supplierPriceId);
+
+    if (!selectedPrice) {
+      return;
+    }
+
+    const quotedAt = formatDate(selectedPrice.quoted_at);
+    setOfferForm((currentForm) => ({
+      ...currentForm,
+      notes: `Basado en precio histórico del ${quotedAt}`,
+      supplier_description: supplierPriceDescription(selectedPrice),
+      unit_price:
+        selectedPrice.cost === null || selectedPrice.cost === undefined
+          ? currentForm.unit_price
+          : String(selectedPrice.cost),
+      valid_until: selectedPrice.valid_until
+        ? inputDateValue(selectedPrice.valid_until)
+        : currentForm.valid_until,
+    }));
+
+    if (!companyId || line.product_id || !selectedPrice.product_id) {
+      return;
+    }
+
+    const { error } = await supabase
+      .from("client_request_lines")
+      .update({ product_id: selectedPrice.product_id })
+      .eq("id", line.id)
+      .eq("company_id", companyId)
+      .is("product_id", null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setLines((currentLines) =>
+      currentLines.map((currentLine) =>
+        currentLine.id === line.id
+          ? { ...currentLine, product_id: selectedPrice.product_id }
+          : currentLine,
+      ),
+    );
   }
 
   function toggleLineDetails(line: ClientRequestLineRecord) {
@@ -697,6 +841,9 @@ export function SolicitudDetalleClient({
     setEditingOfferId(null);
     setOfferFormLineId(line.id);
     cancelQuickSupplier();
+    setSelectedSupplierPriceId("");
+    setSupplierPrices([]);
+    setIsLoadingSupplierPrices(false);
     setOfferForm({
       ...emptyOfferForm,
       supplier_description: lineDescription(line),
@@ -706,12 +853,16 @@ export function SolicitudDetalleClient({
   }
 
   function startEditingOffer(offer: SupplierOfferRecord) {
+    const supplierId = offer.supplier_id ?? "";
+
     setEditingLineId(null);
     setExpandedLineId(offer.client_request_line_id);
     setShowCreateForm(false);
     setEditingOfferId(offer.id);
     setOfferFormLineId(offer.client_request_line_id);
     cancelQuickSupplier();
+    setSelectedSupplierPriceId("");
+    setSupplierPrices([]);
     setOfferForm({
       currency: offer.currency || "MXN",
       lead_time_days:
@@ -725,13 +876,16 @@ export function SolicitudDetalleClient({
           : String(offer.minimum_order_quantity),
       notes: offer.notes ?? "",
       supplier_description: offer.supplier_description ?? "",
-      supplier_id: offer.supplier_id ?? "",
+      supplier_id: supplierId,
       unit_price:
         offer.unit_price === null || offer.unit_price === undefined
           ? ""
           : String(offer.unit_price),
       valid_until: offer.valid_until ?? "",
     });
+    if (companyId && supplierId) {
+      loadSupplierPrices(companyId, supplierId);
+    }
     setErrorMessage("");
     setSuccessMessage("");
   }
@@ -740,6 +894,9 @@ export function SolicitudDetalleClient({
     setEditingOfferId(null);
     setOfferFormLineId(null);
     setOfferForm(emptyOfferForm);
+    setSelectedSupplierPriceId("");
+    setSupplierPrices([]);
+    setIsLoadingSupplierPrices(false);
     cancelQuickSupplier();
     setErrorMessage("");
   }
@@ -805,6 +962,9 @@ export function SolicitudDetalleClient({
       ...currentForm,
       supplier_id: data.id,
     }));
+    setSelectedSupplierPriceId("");
+    setSupplierPrices([]);
+    await loadSupplierPrices(companyId, data.id);
     setQuickSupplierLineId((currentLineId) =>
       currentLineId === lineId ? null : currentLineId,
     );
@@ -1881,10 +2041,9 @@ export function SolicitudDetalleClient({
                                         }
                                         id={`supplier_id_${line.id}`}
                                         onChange={(event) =>
-                                          setOfferForm((currentForm) => ({
-                                            ...currentForm,
-                                            supplier_id: event.target.value,
-                                          }))
+                                          handleOfferSupplierChange(
+                                            event.target.value,
+                                          )
                                         }
                                         required
                                         value={offerForm.supplier_id}
@@ -2062,6 +2221,54 @@ export function SolicitudDetalleClient({
                                           Cancelar
                                         </button>
                                       </div>
+                                    </div>
+                                  ) : null}
+
+                                  {offerForm.supplier_id ? (
+                                    <div className="space-y-2">
+                                      <label
+                                        className="text-sm font-medium text-stone-800"
+                                        htmlFor={`supplier_price_${line.id}`}
+                                      >
+                                        Producto histórico del proveedor
+                                      </label>
+                                      <select
+                                        className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                        disabled={
+                                          isSavingOffer ||
+                                          isLoadingSupplierPrices ||
+                                          supplierPrices.length === 0
+                                        }
+                                        id={`supplier_price_${line.id}`}
+                                        onChange={(event) =>
+                                          handleSupplierPriceChange(
+                                            line,
+                                            event.target.value,
+                                          )
+                                        }
+                                        value={selectedSupplierPriceId}
+                                      >
+                                        <option value="">
+                                          {isLoadingSupplierPrices
+                                            ? "Cargando historial..."
+                                            : "Captura manual"}
+                                        </option>
+                                        {supplierPrices.map((price) => (
+                                          <option
+                                            key={price.id}
+                                            value={price.id}
+                                          >
+                                            {supplierPriceOptionLabel(price)}
+                                          </option>
+                                        ))}
+                                      </select>
+                                      {!isLoadingSupplierPrices &&
+                                      supplierPrices.length === 0 ? (
+                                        <p className="text-xs text-stone-500">
+                                          Sin productos históricos para este
+                                          proveedor.
+                                        </p>
+                                      ) : null}
                                     </div>
                                   ) : null}
                                 </div>

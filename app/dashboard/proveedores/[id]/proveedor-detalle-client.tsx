@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
+import { linkSupplierPriceToProduct } from "@/src/lib/supabase/supplier-prices";
 import { createClient } from "@/src/lib/supabase/client";
 
 type SupplierRecord = {
@@ -21,12 +22,23 @@ type SupplierPriceRecord = {
   unit: string | null;
   cost: number | string | null;
   quoted_at: string | null;
-  products: { name: string | null }[] | null;
+  valid_until: string | null;
+  notes: string | null;
+  products: SupplierPriceProduct | SupplierPriceProduct[] | null;
 };
 
 type ProveedorDetalleClientProps = {
   supplierId: string;
 };
+
+type SupplierPriceProduct = {
+  category: string | null;
+  image_url: string | null;
+  name: string | null;
+  unit: string | null;
+};
+
+type PriceStatus = "linked" | "unlinked" | "missing-product";
 
 function formatDate(value: string | null) {
   if (!value) {
@@ -44,6 +56,54 @@ function formatMoney(value: number | string | null | undefined) {
     currency: "MXN",
     style: "currency",
   }).format(Number.isFinite(parsedValue) ? parsedValue : 0);
+}
+
+function getPriceProduct(price: SupplierPriceRecord) {
+  return Array.isArray(price.products) ? price.products[0] : price.products;
+}
+
+function getPriceStatus(price: SupplierPriceRecord): PriceStatus {
+  const product = getPriceProduct(price);
+
+  if (price.product_id && product) {
+    return "linked";
+  }
+
+  if (price.product_id) {
+    return "missing-product";
+  }
+
+  return "unlinked";
+}
+
+function getPriceDisplayName(price: SupplierPriceRecord) {
+  const product = getPriceProduct(price);
+
+  return product?.name || price.product_description || "Sin descripción";
+}
+
+function getStatusLabel(status: PriceStatus) {
+  if (status === "linked") {
+    return "En catálogo";
+  }
+
+  if (status === "missing-product") {
+    return "Producto no encontrado";
+  }
+
+  return "Sin vincular";
+}
+
+function getStatusClasses(status: PriceStatus) {
+  if (status === "linked") {
+    return "bg-emerald-50 text-emerald-800";
+  }
+
+  if (status === "missing-product") {
+    return "bg-red-50 text-red-700";
+  }
+
+  return "bg-amber-50 text-amber-800";
 }
 
 export function ProveedorDetalleClient({
@@ -107,7 +167,7 @@ export function ProveedorDetalleClient({
         supabase
           .from("supplier_prices")
           .select(
-            "id,product_id,product_description,unit,cost,quoted_at,products(name)",
+            "id,product_id,product_description,cost,unit,quoted_at,valid_until,notes,products:product_id(name,category,unit,image_url)",
           )
           .eq("company_id", profile.company_id)
           .eq("supplier_id", supplierId)
@@ -162,20 +222,33 @@ export function ProveedorDetalleClient({
 
     if (productResponse.error) {
       setCatalogingPriceId(null);
-      setErrorMessage(productResponse.error.message);
+      setErrorMessage("No se pudo preparar el producto para vincularlo.");
       return;
     }
 
-    const { error: priceError } = await supabase
-      .from("supplier_prices")
-      .update({ product_id: productResponse.product.id })
-      .eq("id", price.id)
-      .eq("company_id", companyId);
+    const linkResponse = await linkSupplierPriceToProduct(supabase, {
+      companyId,
+      cost: price.cost,
+      id: price.id,
+      productId: productResponse.product.id,
+      quotedAt: price.quoted_at,
+      supplierId,
+    });
 
     setCatalogingPriceId(null);
 
-    if (priceError) {
-      setErrorMessage(priceError.message);
+    if (linkResponse.error) {
+      setErrorMessage(linkResponse.error.message);
+      return;
+    }
+
+    if (linkResponse.duplicated) {
+      setSuccessMessage(
+        "Ya existía un registro equivalente. Se eliminó el duplicado.",
+      );
+      setPrices((currentPrices) =>
+        currentPrices.filter((currentPrice) => currentPrice.id !== price.id),
+      );
       return;
     }
 
@@ -186,7 +259,95 @@ export function ProveedorDetalleClient({
           ? {
               ...currentPrice,
               product_id: productResponse.product.id,
-              products: [{ name: productResponse.product.name }],
+              products: {
+                category: null,
+                image_url: null,
+                name: productResponse.product.name,
+                unit: currentPrice.unit,
+              },
+            }
+          : currentPrice,
+      ),
+    );
+  }
+
+  async function linkPriceToExistingProduct(price: SupplierPriceRecord) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    const productName = price.product_description?.trim();
+
+    if (!productName) {
+      setErrorMessage("El artículo no tiene descripción para vincular.");
+      return;
+    }
+
+    setCatalogingPriceId(price.id);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const productResponse = await supabase
+      .from("products")
+      .select("id,name,category,unit,image_url")
+      .eq("company_id", companyId)
+      .eq("name", productName)
+      .limit(1)
+      .maybeSingle();
+
+    if (productResponse.error) {
+      setCatalogingPriceId(null);
+      setErrorMessage("No se pudo buscar el producto existente.");
+      return;
+    }
+
+    if (!productResponse.data) {
+      setCatalogingPriceId(null);
+      setErrorMessage("No se encontró un producto existente con esa descripción.");
+      return;
+    }
+
+    const product = productResponse.data as { id: string } & SupplierPriceProduct;
+    const linkResponse = await linkSupplierPriceToProduct(supabase, {
+      companyId,
+      cost: price.cost,
+      id: price.id,
+      productId: product.id,
+      quotedAt: price.quoted_at,
+      supplierId,
+    });
+
+    setCatalogingPriceId(null);
+
+    if (linkResponse.error) {
+      setErrorMessage(linkResponse.error.message);
+      return;
+    }
+
+    if (linkResponse.duplicated) {
+      setSuccessMessage(
+        "Ya existía un registro equivalente. Se eliminó el duplicado.",
+      );
+      setPrices((currentPrices) =>
+        currentPrices.filter((currentPrice) => currentPrice.id !== price.id),
+      );
+      return;
+    }
+
+    setSuccessMessage("Producto vinculado al catálogo.");
+    setPrices((currentPrices) =>
+      currentPrices.map((currentPrice) =>
+        currentPrice.id === price.id
+          ? {
+              ...currentPrice,
+              product_id: product.id,
+              products: {
+                category: product.category,
+                image_url: product.image_url,
+                name: product.name,
+                unit: product.unit,
+              },
             }
           : currentPrice,
       ),
@@ -285,52 +446,69 @@ export function ProveedorDetalleClient({
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-200 bg-white">
-                {prices.map((price) => (
-                  <tr key={price.id}>
-                    <td className="px-5 py-4 font-medium text-stone-950">
-                      {price.product_id
-                        ? price.products?.[0]?.name || "Producto no disponible"
-                        : price.product_description || "Artículo sin descripción"}
-                    </td>
-                    <td className="px-5 py-4">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                          price.product_id
-                            ? "bg-emerald-50 text-emerald-800"
-                            : "bg-amber-50 text-amber-800"
-                        }`}
-                      >
-                        {price.product_id ? "En catálogo" : "Sin catalogar"}
-                      </span>
-                    </td>
-                    <td className="px-5 py-4 text-right text-stone-700">
-                      {formatMoney(price.cost)}
-                    </td>
-                    <td className="px-5 py-4 text-stone-700">
-                      {formatDate(price.quoted_at)}
-                    </td>
-                    <td className="px-5 py-4">
-                      <div className="flex justify-end">
-                        {!price.product_id ? (
-                          <button
-                            className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            disabled={catalogingPriceId === price.id}
-                            onClick={() => addPriceProductToCatalog(price)}
-                            type="button"
-                          >
-                            {catalogingPriceId === price.id
-                              ? "Agregando..."
-                              : "Agregar al catálogo"}
-                          </button>
-                        ) : (
-                          <span className="text-sm text-stone-500">
-                            Sin acciones
-                          </span>
-                        )}
-                      </div>
-                    </td>
-                  </tr>
-                ))}
+                {prices.map((price) => {
+                  const status = getPriceStatus(price);
+
+                  return (
+                    <tr key={price.id}>
+                      <td className="px-5 py-4 font-medium text-stone-950">
+                        {getPriceDisplayName(price)}
+                      </td>
+                      <td className="px-5 py-4">
+                        <span
+                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusClasses(
+                            status,
+                          )}`}
+                        >
+                          {getStatusLabel(status)}
+                        </span>
+                      </td>
+                      <td className="px-5 py-4 text-right text-stone-700">
+                        {formatMoney(price.cost)}
+                      </td>
+                      <td className="px-5 py-4 text-stone-700">
+                        {formatDate(price.quoted_at)}
+                      </td>
+                      <td className="px-5 py-4">
+                        <div className="flex justify-end gap-2">
+                          {status === "unlinked" ? (
+                            <>
+                              <button
+                                className="h-9 rounded-md border border-stone-200 px-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={catalogingPriceId === price.id}
+                                onClick={() => linkPriceToExistingProduct(price)}
+                                type="button"
+                              >
+                                Vincular producto existente
+                              </button>
+                              <button
+                                className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                disabled={catalogingPriceId === price.id}
+                                onClick={() => addPriceProductToCatalog(price)}
+                                type="button"
+                              >
+                                {catalogingPriceId === price.id
+                                  ? "Agregando..."
+                                  : "Agregar al catálogo"}
+                              </button>
+                            </>
+                          ) : status === "linked" ? (
+                            <Link
+                              className="inline-flex h-9 items-center rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
+                              href={`/dashboard/productos/${price.product_id}`}
+                            >
+                              Editar producto
+                            </Link>
+                          ) : (
+                            <span className="text-sm text-stone-500">
+                              Sin acciones
+                            </span>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
