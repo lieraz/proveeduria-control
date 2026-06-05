@@ -2,6 +2,10 @@
 
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import {
+  InlineBooleanCell,
+  InlineEditableCell,
+} from "../inline-editable-cell";
 import { createClient } from "@/src/lib/supabase/client";
 
 type RelatedRecord = {
@@ -34,6 +38,15 @@ type ContactFormState = {
   supplier_id: string;
   notes: string;
 };
+
+type ContactInlineField =
+  | "active"
+  | "contact_name"
+  | "email"
+  | "organization_area"
+  | "phone"
+  | "position"
+  | "whatsapp";
 
 const emptyForm: ContactFormState = {
   contact_name: "",
@@ -385,6 +398,36 @@ export function ContactosClient() {
     }
 
     await loadContacts(companyId, search, clientsById, suppliersById);
+  }
+
+  async function updateContactInline(
+    rowId: string,
+    field: ContactInlineField,
+    value: boolean | string | null,
+  ) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      throw new Error("No se encontró la empresa del usuario.");
+    }
+
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("contacts")
+      .update({ [field]: value })
+      .eq("id", rowId)
+      .eq("company_id", companyId);
+
+    if (error) {
+      setErrorMessage(error.message);
+      throw error;
+    }
+
+    setContacts((currentContacts) =>
+      currentContacts.map((contact) =>
+        contact.id === rowId ? { ...contact, [field]: value } : contact,
+      ),
+    );
   }
 
   return (
@@ -743,22 +786,76 @@ export function ContactosClient() {
                 {contacts.map((contact) => (
                   <tr key={contact.id}>
                     <td className="px-5 py-4 font-medium text-stone-950">
-                      {contact.contact_name}
+                      <InlineEditableCell
+                        emptyLabel="Sin nombre"
+                        label="nombre del contacto"
+                        onSave={(value) =>
+                          updateContactInline(
+                            contact.id,
+                            "contact_name",
+                            value ?? "",
+                          )
+                        }
+                        required
+                        value={contact.contact_name}
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {contact.organization_area || "Sin área"}
+                      <InlineEditableCell
+                        emptyLabel="Sin área"
+                        label="área"
+                        onSave={(value) =>
+                          updateContactInline(
+                            contact.id,
+                            "organization_area",
+                            value,
+                          )
+                        }
+                        value={contact.organization_area}
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {contact.position || "Sin puesto"}
+                      <InlineEditableCell
+                        emptyLabel="Sin puesto"
+                        label="puesto"
+                        onSave={(value) =>
+                          updateContactInline(contact.id, "position", value)
+                        }
+                        value={contact.position}
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {contact.phone || "Sin teléfono"}
+                      <InlineEditableCell
+                        emptyLabel="Sin teléfono"
+                        label="teléfono"
+                        onSave={(value) =>
+                          updateContactInline(contact.id, "phone", value)
+                        }
+                        type="tel"
+                        value={contact.phone}
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {contact.whatsapp || "Sin WhatsApp"}
+                      <InlineEditableCell
+                        emptyLabel="Sin WhatsApp"
+                        label="WhatsApp"
+                        onSave={(value) =>
+                          updateContactInline(contact.id, "whatsapp", value)
+                        }
+                        type="tel"
+                        value={contact.whatsapp}
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {contact.email || "Sin correo"}
+                      <InlineEditableCell
+                        emptyLabel="Sin correo"
+                        label="correo"
+                        onSave={(value) =>
+                          updateContactInline(contact.id, "email", value)
+                        }
+                        type="email"
+                        value={contact.email}
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
                       {relatedLabel(contact.client_id, clientsById)}
@@ -767,15 +864,13 @@ export function ContactosClient() {
                       {relatedLabel(contact.supplier_id, suppliersById)}
                     </td>
                     <td className="px-5 py-4">
-                      <span
-                        className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${
-                          contact.active
-                            ? "bg-emerald-50 text-emerald-800"
-                            : "bg-stone-100 text-stone-600"
-                        }`}
-                      >
-                        {contact.active ? "Activo" : "Inactivo"}
-                      </span>
+                      <InlineBooleanCell
+                        label="estado del contacto"
+                        onSave={(value) =>
+                          updateContactInline(contact.id, "active", value)
+                        }
+                        value={contact.active}
+                      />
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex justify-end gap-2">

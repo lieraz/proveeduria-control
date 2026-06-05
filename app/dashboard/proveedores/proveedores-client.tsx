@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import { InlineEditableCell } from "../inline-editable-cell";
 import { ContactosSection } from "../contactos-section";
 import { createClient } from "@/src/lib/supabase/client";
 
@@ -28,6 +29,13 @@ type SupplierFormState = {
   payment_terms: string;
   notes: string;
 };
+
+type SupplierInlineField =
+  | "contact_name"
+  | "email"
+  | "name"
+  | "notes"
+  | "phone";
 
 const emptyForm: SupplierFormState = {
   name: "",
@@ -321,6 +329,44 @@ export function ProveedoresClient() {
     }
 
     await loadSuppliers(companyId, search);
+  }
+
+  async function updateSupplierInline(
+    rowId: string,
+    field: SupplierInlineField,
+    value: string | null,
+  ) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      throw new Error("No se encontró la empresa del usuario.");
+    }
+
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("suppliers")
+      .update({ [field]: value })
+      .eq("id", rowId)
+      .eq("company_id", companyId);
+
+    if (error) {
+      setErrorMessage(error.message);
+      throw error;
+    }
+
+    setSuppliers((currentSuppliers) =>
+      currentSuppliers.map((supplier) =>
+        supplier.id === rowId ? { ...supplier, [field]: value } : supplier,
+      ),
+    );
+
+    if (field === "name") {
+      setSelectedContactsSupplier((currentSupplier) =>
+        currentSupplier?.id === rowId
+          ? { ...currentSupplier, name: value ?? "" }
+          : currentSupplier,
+      );
+    }
   }
 
   return (
@@ -641,46 +687,92 @@ export function ProveedoresClient() {
                   <th className="px-5 py-3">Nombre</th>
                   <th className="px-5 py-3">RFC</th>
                   <th className="px-5 py-3">Contacto</th>
+                  <th className="px-5 py-3">Teléfono</th>
+                  <th className="px-5 py-3">Correo</th>
                   <th className="px-5 py-3">Categorías</th>
-                  <th className="px-5 py-3">Términos</th>
-                  <th className="px-5 py-3 text-right">Acciones</th>
+                  <th className="px-5 py-3">Notas</th>
+                  <th className="min-w-72 px-5 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-stone-200 bg-white">
                 {suppliers.map((supplier) => (
                   <tr key={supplier.id}>
                     <td className="px-5 py-4 font-medium text-stone-950">
-                      {supplier.name}
+                      <InlineEditableCell
+                        emptyLabel="Sin nombre"
+                        label="nombre del proveedor"
+                        onSave={(value) =>
+                          updateSupplierInline(supplier.id, "name", value ?? "")
+                        }
+                        required
+                        value={supplier.name}
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
                       {supplier.rfc || "Sin RFC"}
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      <div className="space-y-1">
-                        <p>{supplier.contact_name || "Sin contacto"}</p>
-                        <p className="text-xs text-stone-500">
-                          {supplier.email || supplier.phone || "Sin datos"}
-                        </p>
-                      </div>
+                      <InlineEditableCell
+                        emptyLabel="Sin contacto"
+                        label="contacto"
+                        onSave={(value) =>
+                          updateSupplierInline(
+                            supplier.id,
+                            "contact_name",
+                            value,
+                          )
+                        }
+                        value={supplier.contact_name}
+                      />
+                    </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      <InlineEditableCell
+                        emptyLabel="Sin teléfono"
+                        label="teléfono"
+                        onSave={(value) =>
+                          updateSupplierInline(supplier.id, "phone", value)
+                        }
+                        type="tel"
+                        value={supplier.phone}
+                      />
+                    </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      <InlineEditableCell
+                        emptyLabel="Sin correo"
+                        label="correo"
+                        onSave={(value) =>
+                          updateSupplierInline(supplier.id, "email", value)
+                        }
+                        type="email"
+                        value={supplier.email}
+                      />
                     </td>
                     <td className="max-w-xs px-5 py-4 text-stone-700">
                       <span className="line-clamp-2">
                         {categoryLabel(supplier.categories)}
                       </span>
                     </td>
-                    <td className="px-5 py-4 text-stone-700">
-                      {supplier.payment_terms || "Sin términos"}
+                    <td className="max-w-xs px-5 py-4 text-stone-700">
+                      <InlineEditableCell
+                        emptyLabel="Sin notas"
+                        label="notas"
+                        onSave={(value) =>
+                          updateSupplierInline(supplier.id, "notes", value)
+                        }
+                        textarea
+                        value={supplier.notes}
+                      />
                     </td>
-                    <td className="px-5 py-4">
-                      <div className="flex flex-wrap justify-end gap-2">
+                    <td className="min-w-72 px-5 py-4 align-top">
+                      <div className="grid grid-cols-2 gap-2">
                         <Link
-                          className="inline-flex h-9 items-center rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
+                          className="inline-flex h-9 items-center justify-center whitespace-nowrap rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
                           href={`/dashboard/proveedores/${supplier.id}`}
                         >
                           Ver cotizados
                         </Link>
                         <button
-                          className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="h-9 whitespace-nowrap rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
                           disabled={isSaving || isDeletingId === supplier.id}
                           onClick={() => setSelectedContactsSupplier(supplier)}
                           type="button"
@@ -688,7 +780,7 @@ export function ProveedoresClient() {
                           Ver contactos
                         </button>
                         <button
-                          className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="h-9 whitespace-nowrap rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
                           disabled={isSaving || isDeletingId === supplier.id}
                           onClick={() => startEditing(supplier)}
                           type="button"
@@ -696,7 +788,7 @@ export function ProveedoresClient() {
                           Editar
                         </button>
                         <button
-                          className="h-9 rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          className="h-9 whitespace-nowrap rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
                           disabled={isSaving || isDeletingId === supplier.id}
                           onClick={() => deleteSupplier(supplier)}
                           type="button"

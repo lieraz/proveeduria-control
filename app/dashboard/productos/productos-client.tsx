@@ -3,6 +3,10 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import {
+  InlineBooleanCell,
+  InlineEditableCell,
+} from "../inline-editable-cell";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ProductRecord = {
@@ -26,6 +30,14 @@ type ProductFormState = {
   description: string;
   image_url: string;
 };
+
+type ProductInlineField =
+  | "active"
+  | "brand"
+  | "category"
+  | "model"
+  | "name"
+  | "unit";
 
 const emptyForm: ProductFormState = {
   name: "",
@@ -316,6 +328,36 @@ export function ProductosClient() {
     }
 
     await loadProducts(companyId, search);
+  }
+
+  async function updateProductInline(
+    rowId: string,
+    field: ProductInlineField,
+    value: boolean | string | null,
+  ) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      throw new Error("No se encontró la empresa del usuario.");
+    }
+
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("products")
+      .update({ [field]: value })
+      .eq("id", rowId)
+      .eq("company_id", companyId);
+
+    if (error) {
+      setErrorMessage(error.message);
+      throw error;
+    }
+
+    setProducts((currentProducts) =>
+      currentProducts.map((product) =>
+        product.id === rowId ? { ...product, [field]: value } : product,
+      ),
+    );
   }
 
   return (
@@ -620,7 +662,8 @@ export function ProductosClient() {
               <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
                 <tr>
                   <th className="px-5 py-3">Producto</th>
-                  <th className="px-5 py-3">Marca/modelo</th>
+                  <th className="px-5 py-3">Marca</th>
+                  <th className="px-5 py-3">Modelo</th>
                   <th className="px-5 py-3">Categoría</th>
                   <th className="px-5 py-3">Unidad</th>
                   <th className="px-5 py-3">Descripción</th>
@@ -634,20 +677,68 @@ export function ProductosClient() {
                     <td className="px-5 py-4">
                       <div className="flex min-w-60 items-center gap-3">
                         <ProductThumbnail product={product} />
-                        <p className="font-medium text-stone-950">
-                          {product.name}
-                        </p>
+                        <div className="font-medium text-stone-950">
+                          <InlineEditableCell
+                            emptyLabel="Sin nombre"
+                            label="nombre del producto"
+                            onSave={(value) =>
+                              updateProductInline(
+                                product.id,
+                                "name",
+                                value ?? "",
+                              )
+                            }
+                            required
+                            value={product.name}
+                          />
+                        </div>
                       </div>
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {[product.brand, product.model].filter(Boolean).join(" / ") ||
-                        "Sin marca/modelo"}
+                      <InlineEditableCell
+                        emptyLabel="Sin marca"
+                        label="marca"
+                        onSave={(value) =>
+                          updateProductInline(product.id, "brand", value)
+                        }
+                        value={product.brand}
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {product.category || "Sin categoría"}
+                      <InlineEditableCell
+                        emptyLabel="Sin modelo"
+                        label="modelo"
+                        onSave={(value) =>
+                          updateProductInline(product.id, "model", value)
+                        }
+                        value={product.model}
+                      />
                     </td>
                     <td className="px-5 py-4 text-stone-700">
-                      {product.unit || "Sin unidad"}
+                      <InlineEditableCell
+                        emptyLabel="Sin categoría"
+                        label="categoría"
+                        onSave={(value) =>
+                          updateProductInline(product.id, "category", value)
+                        }
+                        value={product.category}
+                      />
+                    </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      <InlineEditableCell
+                        emptyLabel="Sin unidad"
+                        label="unidad"
+                        onSave={(value) =>
+                          updateProductInline(
+                            product.id,
+                            "unit",
+                            value ?? "pieza",
+                          )
+                        }
+                        options={unitOptions}
+                        required
+                        value={product.unit ?? "pieza"}
+                      />
                     </td>
                     <td className="max-w-xs px-5 py-4 text-stone-700">
                       <span className="line-clamp-2">
@@ -655,15 +746,13 @@ export function ProductosClient() {
                       </span>
                     </td>
                     <td className="px-5 py-4">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
-                          product.active
-                            ? "border-emerald-200 bg-emerald-50 text-emerald-800"
-                            : "border-stone-200 bg-stone-100 text-stone-600"
-                        }`}
-                      >
-                        {product.active ? "Activo" : "Inactivo"}
-                      </span>
+                      <InlineBooleanCell
+                        label="estado del producto"
+                        onSave={(value) =>
+                          updateProductInline(product.id, "active", value)
+                        }
+                        value={product.active}
+                      />
                     </td>
                     <td className="px-5 py-4">
                       <div className="flex justify-end gap-2">
