@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import {
+  ArchiveBadge,
+  ArchiveFilter,
+  ArchiveFilterToggle,
+} from "@/app/dashboard/archive-controls";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -32,6 +37,9 @@ type RequestRecord = {
   urgency: string | null;
   status: string | null;
   notes: string | null;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
 };
 
 type RequestFormState = {
@@ -192,7 +200,10 @@ export function SolicitudesClient() {
   const [editingFolio, setEditingFolio] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [form, setForm] = useState<RequestFormState>(emptyForm);
-  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
+  const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
+  const [isUpdatingArchiveId, setIsUpdatingArchiveId] = useState<string | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -222,16 +233,27 @@ export function SolicitudesClient() {
       activeCompanyId: string,
       searchValue: string,
       activeClientsById: Map<string, ClientRecord>,
+      activeArchiveFilter: ArchiveFilter,
     ) => {
       setErrorMessage("");
 
-      const { data, error } = await supabase
+      let query = supabase
         .from("client_requests")
         .select(
-          "id,folio,client_id,contact_ref_id,requested_at,requested_by,channel,description,urgency,status,notes",
+          "id,folio,client_id,contact_ref_id,requested_at,requested_by,channel,description,urgency,status,notes,archived_at,archived_by,archive_reason",
         )
         .eq("company_id", activeCompanyId)
         .order("requested_at", { ascending: false });
+
+      if (activeArchiveFilter === "active") {
+        query = query.is("archived_at", null);
+      }
+
+      if (activeArchiveFilter === "archived") {
+        query = query.not("archived_at", "is", null);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         setErrorMessage(error.message);
@@ -356,7 +378,7 @@ export function SolicitudesClient() {
         setContacts([]);
       }
 
-      await loadRequests(activeCompanyId, "", loadedClientsById);
+      await loadRequests(activeCompanyId, "", loadedClientsById, "active");
       setIsLoading(false);
     }
 
@@ -371,7 +393,19 @@ export function SolicitudesClient() {
     }
 
     setIsSearching(true);
-    await loadRequests(companyId, search, clientsById);
+    await loadRequests(companyId, search, clientsById, archiveFilter);
+    setIsSearching(false);
+  }
+
+  async function handleArchiveFilterChange(nextFilter: ArchiveFilter) {
+    setArchiveFilter(nextFilter);
+
+    if (!companyId) {
+      return;
+    }
+
+    setIsSearching(true);
+    await loadRequests(companyId, search, clientsById, nextFilter);
     setIsSearching(false);
   }
 
@@ -429,7 +463,7 @@ export function SolicitudesClient() {
     setEditingFolio(null);
     setShowCreateForm(false);
     setForm(emptyForm());
-    await loadRequests(companyId, search, clientsById);
+    await loadRequests(companyId, search, clientsById, archiveFilter);
   }
 
   function startEditing(request: RequestRecord) {
@@ -484,31 +518,43 @@ export function SolicitudesClient() {
     setErrorMessage("");
   }
 
-  async function deleteRequest(request: RequestRecord) {
+  async function archiveRequest(request: RequestRecord) {
     if (!companyId) {
       setErrorMessage("No se encontró la empresa del usuario.");
       return;
     }
 
-    const requestLabel = request.folio || "sin folio";
-    const shouldDelete = window.confirm(
-      `¿Eliminar la solicitud "${requestLabel}"? Esta acción no se puede deshacer.`,
-    );
+    const shouldArchive = window.confirm("¿Archivar este registro?");
 
-    if (!shouldDelete) {
+    if (!shouldArchive) {
       return;
     }
 
-    setIsDeletingId(request.id);
+    setIsUpdatingArchiveId(request.id);
     setErrorMessage("");
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsUpdatingArchiveId(null);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
 
     const { error } = await supabase
       .from("client_requests")
-      .delete()
+      .update({
+        archived_at: new Date().toISOString(),
+        archived_by: user.id,
+        archive_reason: null,
+      })
       .eq("id", request.id)
       .eq("company_id", companyId);
 
-    setIsDeletingId(null);
+    setIsUpdatingArchiveId(null);
 
     if (error) {
       setErrorMessage(error.message);
@@ -519,7 +565,36 @@ export function SolicitudesClient() {
       cancelEditing();
     }
 
-    await loadRequests(companyId, search, clientsById);
+    await loadRequests(companyId, search, clientsById, archiveFilter);
+  }
+
+  async function restoreRequest(request: RequestRecord) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    setIsUpdatingArchiveId(request.id);
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("client_requests")
+      .update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+      })
+      .eq("id", request.id)
+      .eq("company_id", companyId);
+
+    setIsUpdatingArchiveId(null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    await loadRequests(companyId, search, clientsById, archiveFilter);
   }
 
   return (
@@ -850,6 +925,13 @@ export function SolicitudesClient() {
               <p className="mt-1 text-sm text-stone-600">
                 Busca por folio, cliente, solicitante, descripción o estado.
               </p>
+              <div className="mt-3">
+                <ArchiveFilterToggle
+                  disabled={isLoading || isSearching}
+                  onChange={handleArchiveFilterChange}
+                  value={archiveFilter}
+                />
+              </div>
             </div>
 
             <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
@@ -956,11 +1038,14 @@ export function SolicitudesClient() {
                       </span>
                     </td>
                     <td className="px-5 py-4">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${requestStatusBadgeClass(request.status)}`}
-                      >
-                        {request.status || "nueva"}
-                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        <span
+                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${requestStatusBadgeClass(request.status)}`}
+                        >
+                          {request.status || "nueva"}
+                        </span>
+                        {request.archived_at ? <ArchiveBadge /> : null}
+                      </div>
                     </td>
                     <td className="px-5 py-4 text-stone-700">
                       {lineCountsByRequestId.get(request.id) ?? 0}
@@ -975,22 +1060,41 @@ export function SolicitudesClient() {
                         </Link>
                         <button
                           className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={isSaving || isDeletingId === request.id}
+                          disabled={
+                            isSaving || isUpdatingArchiveId === request.id
+                          }
                           onClick={() => startEditing(request)}
                           type="button"
                         >
                           Editar
                         </button>
-                        <button
-                          className="h-9 rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={isSaving || isDeletingId === request.id}
-                          onClick={() => deleteRequest(request)}
-                          type="button"
-                        >
-                          {isDeletingId === request.id
-                            ? "Eliminando..."
-                            : "Eliminar"}
-                        </button>
+                        {request.archived_at ? (
+                          <button
+                            className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={
+                              isSaving || isUpdatingArchiveId === request.id
+                            }
+                            onClick={() => restoreRequest(request)}
+                            type="button"
+                          >
+                            {isUpdatingArchiveId === request.id
+                              ? "Restaurando..."
+                              : "Restaurar"}
+                          </button>
+                        ) : (
+                          <button
+                            className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={
+                              isSaving || isUpdatingArchiveId === request.id
+                            }
+                            onClick={() => archiveRequest(request)}
+                            type="button"
+                          >
+                            {isUpdatingArchiveId === request.id
+                              ? "Archivando..."
+                              : "Archivar"}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

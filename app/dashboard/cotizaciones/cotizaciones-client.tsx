@@ -3,6 +3,11 @@
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import {
+  ArchiveBadge,
+  ArchiveFilter,
+  ArchiveFilterToggle,
+} from "@/app/dashboard/archive-controls";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -35,6 +40,9 @@ type QuotationRecord = {
   quoted_at: string | null;
   valid_until: string | null;
   status: string | null;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
 };
 
 type QuotationLineRecord = {
@@ -187,7 +195,10 @@ export function CotizacionesClient() {
   );
   const [errorMessage, setErrorMessage] = useState("");
   const [form, setForm] = useState<QuotationFormState>(emptyForm);
-  const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
+  const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
+  const [isUpdatingArchiveId, setIsUpdatingArchiveId] = useState<string | null>(
+    null,
+  );
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -217,16 +228,27 @@ export function CotizacionesClient() {
       activeCompanyId: string,
       searchValue: string,
       activeClientsById: Map<string, ClientRecord>,
+      activeArchiveFilter: ArchiveFilter,
     ) => {
       setErrorMessage("");
 
-      const { data, error } = await supabase
+      let query = supabase
         .from("quotations")
         .select(
-          "id,folio,request_id,client_id,contact_ref_id,quoted_at,valid_until,status",
+          "id,folio,request_id,client_id,contact_ref_id,quoted_at,valid_until,status,archived_at,archived_by,archive_reason",
         )
         .eq("company_id", activeCompanyId)
         .order("quoted_at", { ascending: false });
+
+      if (activeArchiveFilter === "active") {
+        query = query.is("archived_at", null);
+      }
+
+      if (activeArchiveFilter === "archived") {
+        query = query.not("archived_at", "is", null);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         setErrorMessage(error.message);
@@ -354,6 +376,7 @@ export function CotizacionesClient() {
         .from("client_requests")
         .select("id,folio,client_id,contact_ref_id,description")
         .eq("company_id", activeCompanyId)
+        .is("archived_at", null)
         .order("requested_at", { ascending: false });
 
       if (requestsError) {
@@ -363,7 +386,7 @@ export function CotizacionesClient() {
       }
 
       setRequests((requestsData ?? []) as RequestRecord[]);
-      await loadQuotations(activeCompanyId, "", loadedClientsById);
+      await loadQuotations(activeCompanyId, "", loadedClientsById, "active");
       setIsLoading(false);
     }
 
@@ -378,7 +401,19 @@ export function CotizacionesClient() {
     }
 
     setIsSearching(true);
-    await loadQuotations(companyId, search, clientsById);
+    await loadQuotations(companyId, search, clientsById, archiveFilter);
+    setIsSearching(false);
+  }
+
+  async function handleArchiveFilterChange(nextFilter: ArchiveFilter) {
+    setArchiveFilter(nextFilter);
+
+    if (!companyId) {
+      return;
+    }
+
+    setIsSearching(true);
+    await loadQuotations(companyId, search, clientsById, nextFilter);
     setIsSearching(false);
   }
 
@@ -433,7 +468,7 @@ export function CotizacionesClient() {
     setEditingFolio(null);
     setShowCreateForm(false);
     setForm(emptyForm());
-    await loadQuotations(companyId, search, clientsById);
+    await loadQuotations(companyId, search, clientsById, archiveFilter);
   }
 
   function handleRequestChange(requestId: string) {
@@ -492,31 +527,43 @@ export function CotizacionesClient() {
     setErrorMessage("");
   }
 
-  async function deleteQuotation(quotation: QuotationRecord) {
+  async function archiveQuotation(quotation: QuotationRecord) {
     if (!companyId) {
       setErrorMessage("No se encontró la empresa del usuario.");
       return;
     }
 
-    const quotationLabel = quotation.folio || "sin folio";
-    const shouldDelete = window.confirm(
-      `¿Eliminar la cotización "${quotationLabel}"? Esta acción no se puede deshacer.`,
-    );
+    const shouldArchive = window.confirm("¿Archivar este registro?");
 
-    if (!shouldDelete) {
+    if (!shouldArchive) {
       return;
     }
 
-    setIsDeletingId(quotation.id);
+    setIsUpdatingArchiveId(quotation.id);
     setErrorMessage("");
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsUpdatingArchiveId(null);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
 
     const { error } = await supabase
       .from("quotations")
-      .delete()
+      .update({
+        archived_at: new Date().toISOString(),
+        archived_by: user.id,
+        archive_reason: null,
+      })
       .eq("id", quotation.id)
       .eq("company_id", companyId);
 
-    setIsDeletingId(null);
+    setIsUpdatingArchiveId(null);
 
     if (error) {
       setErrorMessage(error.message);
@@ -527,7 +574,36 @@ export function CotizacionesClient() {
       cancelEditing();
     }
 
-    await loadQuotations(companyId, search, clientsById);
+    await loadQuotations(companyId, search, clientsById, archiveFilter);
+  }
+
+  async function restoreQuotation(quotation: QuotationRecord) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    setIsUpdatingArchiveId(quotation.id);
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("quotations")
+      .update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+      })
+      .eq("id", quotation.id)
+      .eq("company_id", companyId);
+
+    setIsUpdatingArchiveId(null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    await loadQuotations(companyId, search, clientsById, archiveFilter);
   }
 
   return (
@@ -775,6 +851,13 @@ export function CotizacionesClient() {
               <p className="mt-1 text-sm text-stone-600">
                 Busca por folio, cliente o estado.
               </p>
+              <div className="mt-3">
+                <ArchiveFilterToggle
+                  disabled={isLoading || isSearching}
+                  onChange={handleArchiveFilterChange}
+                  value={archiveFilter}
+                />
+              </div>
             </div>
 
             <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
@@ -869,11 +952,14 @@ export function CotizacionesClient() {
                       {formatDate(quotation.valid_until)}
                     </td>
                     <td className="px-5 py-4">
-                      <span
-                        className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${quotationStatusBadgeClass(quotation.status)}`}
-                      >
-                        {quotation.status || "borrador"}
-                      </span>
+                      <div className="flex flex-wrap gap-2">
+                        <span
+                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${quotationStatusBadgeClass(quotation.status)}`}
+                        >
+                          {quotation.status || "borrador"}
+                        </span>
+                        {quotation.archived_at ? <ArchiveBadge /> : null}
+                      </div>
                     </td>
                     <td className="px-5 py-4 text-right font-medium text-stone-950">
                       {formatMoney(totalsByQuotationId.get(quotation.id) ?? 0)}
@@ -888,22 +974,41 @@ export function CotizacionesClient() {
                         </Link>
                         <button
                           className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={isSaving || isDeletingId === quotation.id}
+                          disabled={
+                            isSaving || isUpdatingArchiveId === quotation.id
+                          }
                           onClick={() => startEditing(quotation)}
                           type="button"
                         >
                           Editar
                         </button>
-                        <button
-                          className="h-9 rounded-md border border-red-200 px-3 text-sm font-medium text-red-700 transition hover:border-red-300 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-60"
-                          disabled={isSaving || isDeletingId === quotation.id}
-                          onClick={() => deleteQuotation(quotation)}
-                          type="button"
-                        >
-                          {isDeletingId === quotation.id
-                            ? "Eliminando..."
-                            : "Eliminar"}
-                        </button>
+                        {quotation.archived_at ? (
+                          <button
+                            className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={
+                              isSaving || isUpdatingArchiveId === quotation.id
+                            }
+                            onClick={() => restoreQuotation(quotation)}
+                            type="button"
+                          >
+                            {isUpdatingArchiveId === quotation.id
+                              ? "Restaurando..."
+                              : "Restaurar"}
+                          </button>
+                        ) : (
+                          <button
+                            className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                            disabled={
+                              isSaving || isUpdatingArchiveId === quotation.id
+                            }
+                            onClick={() => archiveQuotation(quotation)}
+                            type="button"
+                          >
+                            {isUpdatingArchiveId === quotation.id
+                              ? "Archivando..."
+                              : "Archivar"}
+                          </button>
+                        )}
                       </div>
                     </td>
                   </tr>

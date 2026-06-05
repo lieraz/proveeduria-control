@@ -2,6 +2,11 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ArchiveBadge,
+  ArchiveFilter,
+  ArchiveFilterToggle,
+} from "@/app/dashboard/archive-controls";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -73,6 +78,9 @@ type PurchaseRunRecord = {
   status: string | null;
   notes: string | null;
   created_at: string | null;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
 };
 
 type PurchaseRunLineRecord = {
@@ -197,6 +205,8 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   const [lines, setLines] = useState<InternalOrderLineRecord[]>([]);
   const [order, setOrder] = useState<InternalOrderRecord | null>(null);
   const [products, setProducts] = useState<ProductRecord[]>([]);
+  const [purchaseArchiveFilter, setPurchaseArchiveFilter] =
+    useState<ArchiveFilter>("active");
   const [purchaseRunLines, setPurchaseRunLines] = useState<
     PurchaseRunLineRecord[]
   >([]);
@@ -205,6 +215,9 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   const [showAddForm, setShowAddForm] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
+  const [updatingPurchaseArchiveId, setUpdatingPurchaseArchiveId] = useState<
+    string | null
+  >(null);
   const [warningMessage, setWarningMessage] = useState("");
 
   const clientsById = useMemo(
@@ -274,13 +287,28 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   );
 
   const loadPurchaseRuns = useCallback(
-    async (activeCompanyId: string) => {
-      const { data, error } = await supabase
+    async (
+      activeCompanyId: string,
+      activeArchiveFilter: ArchiveFilter = "active",
+    ) => {
+      let query = supabase
         .from("purchase_runs")
-        .select("id,supplier_id,status,notes,created_at")
+        .select(
+          "id,supplier_id,status,notes,created_at,archived_at,archived_by,archive_reason",
+        )
         .eq("company_id", activeCompanyId)
         .eq("internal_order_id", orderId)
         .order("created_at", { ascending: false });
+
+      if (activeArchiveFilter === "active") {
+        query = query.is("archived_at", null);
+      }
+
+      if (activeArchiveFilter === "archived") {
+        query = query.not("archived_at", "is", null);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         setErrorMessage(error.message);
@@ -427,7 +455,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
       setSuppliers((suppliersResponse.data ?? []) as SupplierRecord[]);
 
       await loadLines(activeCompanyId);
-      await loadPurchaseRuns(activeCompanyId);
+      await loadPurchaseRuns(activeCompanyId, "active");
       setIsLoading(false);
     }
 
@@ -627,7 +655,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
           : `Se generaron ${createdRunCount} compras por proveedor.`,
       );
       await loadLines(companyId);
-      await loadPurchaseRuns(companyId);
+      await loadPurchaseRuns(companyId, purchaseArchiveFilter);
     } catch (error) {
       setErrorMessage(
         error instanceof Error
@@ -637,6 +665,91 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     } finally {
       setIsGenerating(false);
     }
+  }
+
+  async function handlePurchaseArchiveFilterChange(nextFilter: ArchiveFilter) {
+    setPurchaseArchiveFilter(nextFilter);
+
+    if (!companyId) {
+      return;
+    }
+
+    await loadPurchaseRuns(companyId, nextFilter);
+  }
+
+  async function archivePurchaseRun(run: PurchaseRunRecord) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    const shouldArchive = window.confirm("¿Archivar este registro?");
+
+    if (!shouldArchive) {
+      return;
+    }
+
+    setUpdatingPurchaseArchiveId(run.id);
+    setErrorMessage("");
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setUpdatingPurchaseArchiveId(null);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("purchase_runs")
+      .update({
+        archived_at: new Date().toISOString(),
+        archived_by: user.id,
+        archive_reason: null,
+      })
+      .eq("id", run.id)
+      .eq("company_id", companyId);
+
+    setUpdatingPurchaseArchiveId(null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    await loadPurchaseRuns(companyId, purchaseArchiveFilter);
+  }
+
+  async function restorePurchaseRun(run: PurchaseRunRecord) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    setUpdatingPurchaseArchiveId(run.id);
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("purchase_runs")
+      .update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+      })
+      .eq("id", run.id)
+      .eq("company_id", companyId);
+
+    setUpdatingPurchaseArchiveId(null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    await loadPurchaseRuns(companyId, purchaseArchiveFilter);
   }
 
   const quotation = order?.quotation_id
@@ -1099,12 +1212,21 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
 
       <section className="rounded-lg border border-stone-200 bg-white shadow-sm">
         <div className="border-b border-stone-200 p-5">
-          <h3 className="text-lg font-semibold text-stone-950">
-            Compras y recolecciones generadas
-          </h3>
-          <p className="mt-1 text-sm text-stone-600">
-            Cada registro está vinculado a esta orden interna.
-          </p>
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-stone-950">
+                Compras y recolecciones generadas
+              </h3>
+              <p className="mt-1 text-sm text-stone-600">
+                Cada registro está vinculado a esta orden interna.
+              </p>
+            </div>
+            <ArchiveFilterToggle
+              disabled={isLoading}
+              onChange={handlePurchaseArchiveFilterChange}
+              value={purchaseArchiveFilter}
+            />
+          </div>
         </div>
 
         {purchaseRuns.length === 0 ? (
@@ -1131,9 +1253,35 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                         Compra · {run.status || "generada"} · {formatDate(run.created_at)}
                       </p>
                     </div>
-                    <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-800">
-                      {runLines.length} partidas
-                    </span>
+                    <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
+                      {run.archived_at ? <ArchiveBadge /> : null}
+                      <span className="rounded-full border border-sky-200 bg-sky-50 px-2.5 py-1 text-xs font-semibold text-sky-800">
+                        {runLines.length} partidas
+                      </span>
+                      {run.archived_at ? (
+                        <button
+                          className="h-8 rounded-md border border-emerald-200 px-3 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={updatingPurchaseArchiveId === run.id}
+                          onClick={() => restorePurchaseRun(run)}
+                          type="button"
+                        >
+                          {updatingPurchaseArchiveId === run.id
+                            ? "Restaurando..."
+                            : "Restaurar"}
+                        </button>
+                      ) : (
+                        <button
+                          className="h-8 rounded-md border border-stone-300 px-3 text-xs font-semibold text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          disabled={updatingPurchaseArchiveId === run.id}
+                          onClick={() => archivePurchaseRun(run)}
+                          type="button"
+                        >
+                          {updatingPurchaseArchiveId === run.id
+                            ? "Archivando..."
+                            : "Archivar"}
+                        </button>
+                      )}
+                    </div>
                   </div>
                   <div className="mt-4 grid gap-2">
                     {runLines.map((line) => (

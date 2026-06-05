@@ -4,6 +4,11 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Search } from "lucide-react";
+import {
+  ArchiveBadge,
+  ArchiveFilter,
+  ArchiveFilterToggle,
+} from "@/app/dashboard/archive-controls";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -53,6 +58,9 @@ type InternalOrderRecord = {
   notes: string | null;
   created_at: string | null;
   updated_at: string | null;
+  archived_at: string | null;
+  archived_by: string | null;
+  archive_reason: string | null;
 };
 
 type InternalOrderLineRecord = {
@@ -159,9 +167,13 @@ export function OrdenesClient() {
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [form, setForm] = useState<OrderFormState>(emptyForm);
+  const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
+  const [isUpdatingArchiveId, setIsUpdatingArchiveId] = useState<string | null>(
+    null,
+  );
   const [orders, setOrders] = useState<InternalOrderRecord[]>([]);
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [quotationLines, setQuotationLines] = useState<QuotationLineRecord[]>([]);
@@ -196,16 +208,27 @@ export function OrdenesClient() {
       searchValue: string,
       activeQuotationsById: Map<string, QuotationRecord>,
       activeClientsById: Map<string, ClientRecord>,
+      activeArchiveFilter: ArchiveFilter,
     ) => {
       setErrorMessage("");
 
-      const { data, error } = await supabase
+      let query = supabase
         .from("internal_orders")
         .select(
-          "id,folio,quotation_id,approved_at,status,responsible,notes,created_at,updated_at",
+          "id,folio,quotation_id,approved_at,status,responsible,notes,created_at,updated_at,archived_at,archived_by,archive_reason",
         )
         .eq("company_id", activeCompanyId)
         .order("created_at", { ascending: false });
+
+      if (activeArchiveFilter === "active") {
+        query = query.is("archived_at", null);
+      }
+
+      if (activeArchiveFilter === "archived") {
+        query = query.not("archived_at", "is", null);
+      }
+
+      const { data, error } = await query;
 
       if (error) {
         setErrorMessage(error.message);
@@ -313,6 +336,7 @@ export function OrdenesClient() {
           .from("quotations")
           .select("id,folio,client_id,status")
           .eq("company_id", activeCompanyId)
+          .is("archived_at", null)
           .order("created_at", { ascending: false }),
       ]);
 
@@ -337,6 +361,7 @@ export function OrdenesClient() {
         "",
         new Map(loadedQuotations.map((quotation) => [quotation.id, quotation])),
         new Map(loadedClients.map((client) => [client.id, client])),
+        "active",
       );
       setIsLoading(false);
     }
@@ -388,8 +413,95 @@ export function OrdenesClient() {
     }
 
     setIsSearching(true);
-    await loadOrders(companyId, search, quotationsById, clientsById);
+    await loadOrders(companyId, search, quotationsById, clientsById, archiveFilter);
     setIsSearching(false);
+  }
+
+  async function handleArchiveFilterChange(nextFilter: ArchiveFilter) {
+    setArchiveFilter(nextFilter);
+
+    if (!companyId) {
+      return;
+    }
+
+    setIsSearching(true);
+    await loadOrders(companyId, search, quotationsById, clientsById, nextFilter);
+    setIsSearching(false);
+  }
+
+  async function archiveOrder(order: InternalOrderRecord) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    const shouldArchive = window.confirm("¿Archivar este registro?");
+
+    if (!shouldArchive) {
+      return;
+    }
+
+    setIsUpdatingArchiveId(order.id);
+    setErrorMessage("");
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsUpdatingArchiveId(null);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("internal_orders")
+      .update({
+        archived_at: new Date().toISOString(),
+        archived_by: user.id,
+        archive_reason: null,
+      })
+      .eq("id", order.id)
+      .eq("company_id", companyId);
+
+    setIsUpdatingArchiveId(null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    await loadOrders(companyId, search, quotationsById, clientsById, archiveFilter);
+  }
+
+  async function restoreOrder(order: InternalOrderRecord) {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    setIsUpdatingArchiveId(order.id);
+    setErrorMessage("");
+
+    const { error } = await supabase
+      .from("internal_orders")
+      .update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+      })
+      .eq("id", order.id)
+      .eq("company_id", companyId);
+
+    setIsUpdatingArchiveId(null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    await loadOrders(companyId, search, quotationsById, clientsById, archiveFilter);
   }
 
   async function handleSourceModeChange(sourceMode: SourceMode) {
@@ -681,6 +793,13 @@ export function OrdenesClient() {
               <p className="mt-1 text-sm text-stone-600">
                 Busca por folio, cotización, cliente, responsable, estado o notas.
               </p>
+              <div className="mt-3">
+                <ArchiveFilterToggle
+                  disabled={isLoading || isSearching}
+                  onChange={handleArchiveFilterChange}
+                  value={archiveFilter}
+                />
+              </div>
             </div>
 
             <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
@@ -771,20 +890,48 @@ export function OrdenesClient() {
                         {formatDate(order.created_at)}
                       </td>
                       <td className="px-5 py-4">
-                        <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
-                          {order.status || "abierta"}
-                        </span>
+                        <div className="flex flex-wrap gap-2">
+                          <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+                            {order.status || "abierta"}
+                          </span>
+                          {order.archived_at ? <ArchiveBadge /> : null}
+                        </div>
                       </td>
                       <td className="px-5 py-4 text-right font-medium text-stone-950">
                         {formatMoney(totalsByOrderId.get(order.id) ?? 0)}
                       </td>
-                      <td className="px-5 py-4 text-right">
-                        <Link
-                          className="inline-flex h-9 items-center rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50"
-                          href={`/dashboard/ordenes/${order.id}`}
-                        >
-                          Ver detalle
-                        </Link>
+                      <td className="px-5 py-4">
+                        <div className="flex justify-end gap-2">
+                          <Link
+                            className="inline-flex h-9 items-center rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50"
+                            href={`/dashboard/ordenes/${order.id}`}
+                          >
+                            Ver detalle
+                          </Link>
+                          {order.archived_at ? (
+                            <button
+                              className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              disabled={isUpdatingArchiveId === order.id}
+                              onClick={() => restoreOrder(order)}
+                              type="button"
+                            >
+                              {isUpdatingArchiveId === order.id
+                                ? "Restaurando..."
+                                : "Restaurar"}
+                            </button>
+                          ) : (
+                            <button
+                              className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              disabled={isUpdatingArchiveId === order.id}
+                              onClick={() => archiveOrder(order)}
+                              type="button"
+                            >
+                              {isUpdatingArchiveId === order.id
+                                ? "Archivando..."
+                                : "Archivar"}
+                            </button>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   );
