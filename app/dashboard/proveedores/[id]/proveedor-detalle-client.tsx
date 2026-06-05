@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
 import { linkSupplierPriceToProduct } from "@/src/lib/supabase/supplier-prices";
 import { createClient } from "@/src/lib/supabase/client";
@@ -38,6 +38,15 @@ type SupplierPriceProduct = {
   id: string;
   category: string | null;
   image_url: string | null;
+  name: string | null;
+  unit: string | null;
+};
+
+type CatalogProductRecord = {
+  id: string;
+  active: boolean | null;
+  category: string | null;
+  description: string | null;
   name: string | null;
   unit: string | null;
 };
@@ -128,6 +137,49 @@ function getStatusClasses(status: PriceStatus) {
   return "bg-amber-50 text-amber-800";
 }
 
+function normalizeSearch(value: string | null | undefined) {
+  return value?.trim().toLowerCase() ?? "";
+}
+
+function getProductOptionLabel(product: CatalogProductRecord) {
+  const details = [product.category, product.unit].filter(Boolean).join(" - ");
+
+  return details
+    ? `${product.name || "Sin nombre"} - ${details}`
+    : product.name || "Sin nombre";
+}
+
+function getMatchScore(product: CatalogProductRecord, priceDescription: string) {
+  if (!priceDescription) {
+    return 0;
+  }
+
+  const productName = normalizeSearch(product.name);
+  const productCategory = normalizeSearch(product.category);
+  const productDescription = normalizeSearch(product.description);
+
+  if (productName === priceDescription) {
+    return 3;
+  }
+
+  if (
+    productName &&
+    (productName.includes(priceDescription) ||
+      priceDescription.includes(productName))
+  ) {
+    return 2;
+  }
+
+  if (
+    productCategory.includes(priceDescription) ||
+    productDescription.includes(priceDescription)
+  ) {
+    return 1;
+  }
+
+  return 0;
+}
+
 export function ProveedorDetalleClient({
   supplierId,
 }: ProveedorDetalleClientProps) {
@@ -138,9 +190,36 @@ export function ProveedorDetalleClient({
   const [companyId, setCompanyId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [isLoading, setIsLoading] = useState(true);
+  const [linkingPriceId, setLinkingPriceId] = useState<string | null>(null);
+  const [linkSearch, setLinkSearch] = useState("");
+  const [linkingProductId, setLinkingProductId] = useState("");
+  const [products, setProducts] = useState<CatalogProductRecord[]>([]);
   const [prices, setPrices] = useState<SupplierPriceRecord[]>([]);
   const [successMessage, setSuccessMessage] = useState("");
   const [supplier, setSupplier] = useState<SupplierRecord | null>(null);
+
+  const loadSupplierPrices = useCallback(
+    async (activeCompanyId: string) => {
+      const pricesResponse = await supabase
+        .from("supplier_prices")
+        .select(
+          "id,product_id,product_description,supplier_id,cost,unit,quoted_at,valid_until,active,notes,products:product_id(id,name,category,unit,image_url)",
+        )
+        .eq("company_id", activeCompanyId)
+        .eq("supplier_id", supplierId)
+        .order("quoted_at", { ascending: false })
+        .order("created_at", { ascending: false });
+
+      if (pricesResponse.error) {
+        setErrorMessage(pricesResponse.error.message);
+        return false;
+      }
+
+      setPrices((pricesResponse.data ?? []) as SupplierPriceRecord[]);
+      return true;
+    },
+    [supplierId, supabase],
+  );
 
   useEffect(() => {
     async function loadSupplierDetail() {
@@ -179,7 +258,7 @@ export function ProveedorDetalleClient({
 
       setCompanyId(profile.company_id);
 
-      const [supplierResponse, pricesResponse] = await Promise.all([
+      const [supplierResponse, productsResponse] = await Promise.all([
         supabase
           .from("suppliers")
           .select("id,name,rfc,contact_name,phone,email")
@@ -187,17 +266,14 @@ export function ProveedorDetalleClient({
           .eq("id", supplierId)
           .maybeSingle(),
         supabase
-          .from("supplier_prices")
-          .select(
-            "id,product_id,product_description,supplier_id,cost,unit,quoted_at,valid_until,active,notes,products:product_id(id,name,category,unit,image_url)",
-          )
+          .from("products")
+          .select("id,name,category,unit,description,active")
           .eq("company_id", profile.company_id)
-          .eq("supplier_id", supplierId)
-          .order("quoted_at", { ascending: false })
-          .order("created_at", { ascending: false }),
+          .eq("active", true)
+          .order("name", { ascending: true }),
       ]);
 
-      const firstError = supplierResponse.error ?? pricesResponse.error;
+      const firstError = supplierResponse.error ?? productsResponse.error;
 
       if (firstError) {
         setErrorMessage(firstError.message);
@@ -212,12 +288,57 @@ export function ProveedorDetalleClient({
       }
 
       setSupplier(supplierResponse.data as SupplierRecord);
-      setPrices((pricesResponse.data ?? []) as SupplierPriceRecord[]);
+      setProducts((productsResponse.data ?? []) as CatalogProductRecord[]);
+      await loadSupplierPrices(profile.company_id);
       setIsLoading(false);
     }
 
     loadSupplierDetail();
-  }, [supplierId, supabase]);
+  }, [loadSupplierPrices, supplierId, supabase]);
+
+  function closeLinkingForm() {
+    setLinkingPriceId(null);
+    setLinkSearch("");
+    setLinkingProductId("");
+  }
+
+  function openLinkingForm(price: SupplierPriceRecord) {
+    setErrorMessage("");
+    setSuccessMessage("");
+    setLinkingPriceId(price.id);
+    setLinkSearch("");
+    setLinkingProductId("");
+  }
+
+  function getFilteredProducts(price: SupplierPriceRecord) {
+    const query = normalizeSearch(linkSearch);
+    const priceDescription = normalizeSearch(price.product_description);
+
+    return products
+      .filter((product) => {
+        if (!query) {
+          return true;
+        }
+
+        return [product.name, product.category, product.description].some(
+          (value) => normalizeSearch(value).includes(query),
+        );
+      })
+      .sort((firstProduct, secondProduct) => {
+        const scoreDifference =
+          getMatchScore(secondProduct, priceDescription) -
+          getMatchScore(firstProduct, priceDescription);
+
+        if (scoreDifference !== 0) {
+          return scoreDifference;
+        }
+
+        return (firstProduct.name || "").localeCompare(
+          secondProduct.name || "",
+          "es",
+        );
+      });
+  }
 
   async function addPriceProductToCatalog(price: SupplierPriceRecord) {
     if (!companyId) {
@@ -268,42 +389,33 @@ export function ProveedorDetalleClient({
       setSuccessMessage(
         "Ya existía un registro equivalente. Se eliminó el duplicado.",
       );
-      setPrices((currentPrices) =>
-        currentPrices.filter((currentPrice) => currentPrice.id !== price.id),
-      );
+      closeLinkingForm();
+      await loadSupplierPrices(companyId);
       return;
     }
 
     setSuccessMessage("Producto agregado al catálogo.");
-    setPrices((currentPrices) =>
-      currentPrices.map((currentPrice) =>
-        currentPrice.id === price.id
-          ? {
-              ...currentPrice,
-              product_id: productResponse.product.id,
-              products: {
-                category: null,
-                id: productResponse.product.id,
-                image_url: null,
-                name: productResponse.product.name,
-                unit: currentPrice.unit,
-              },
-            }
-          : currentPrice,
-      ),
-    );
+    closeLinkingForm();
+    await loadSupplierPrices(companyId);
   }
 
-  async function linkPriceToExistingProduct(price: SupplierPriceRecord) {
+  async function linkPriceToSelectedProduct(price: SupplierPriceRecord) {
     if (!companyId) {
       setErrorMessage("No se encontró la empresa del usuario.");
       return;
     }
 
-    const productName = price.product_description?.trim();
+    if (!linkingProductId) {
+      setErrorMessage("Selecciona un producto para vincular.");
+      return;
+    }
 
-    if (!productName) {
-      setErrorMessage("El artículo no tiene descripción para vincular.");
+    const product = products.find(
+      (currentProduct) => currentProduct.id === linkingProductId,
+    );
+
+    if (!product) {
+      setErrorMessage("No se encontró el producto seleccionado.");
       return;
     }
 
@@ -311,27 +423,6 @@ export function ProveedorDetalleClient({
     setErrorMessage("");
     setSuccessMessage("");
 
-    const productResponse = await supabase
-      .from("products")
-      .select("id,name,category,unit,image_url")
-      .eq("company_id", companyId)
-      .eq("name", productName)
-      .limit(1)
-      .maybeSingle();
-
-    if (productResponse.error) {
-      setCatalogingPriceId(null);
-      setErrorMessage("No se pudo buscar el producto existente.");
-      return;
-    }
-
-    if (!productResponse.data) {
-      setCatalogingPriceId(null);
-      setErrorMessage("No se encontró un producto existente con esa descripción.");
-      return;
-    }
-
-    const product = productResponse.data as { id: string } & SupplierPriceProduct;
     const linkResponse = await linkSupplierPriceToProduct(supabase, {
       companyId,
       cost: price.cost,
@@ -352,30 +443,14 @@ export function ProveedorDetalleClient({
       setSuccessMessage(
         "Ya existía un registro equivalente. Se eliminó el duplicado.",
       );
-      setPrices((currentPrices) =>
-        currentPrices.filter((currentPrice) => currentPrice.id !== price.id),
-      );
+      closeLinkingForm();
+      await loadSupplierPrices(companyId);
       return;
     }
 
-    setSuccessMessage("Producto vinculado al catálogo.");
-    setPrices((currentPrices) =>
-      currentPrices.map((currentPrice) =>
-        currentPrice.id === price.id
-          ? {
-              ...currentPrice,
-              product_id: product.id,
-              products: {
-                category: product.category,
-                id: product.id,
-                image_url: product.image_url,
-                name: product.name,
-                unit: product.unit,
-              },
-            }
-          : currentPrice,
-      ),
-    );
+    setSuccessMessage("Producto vinculado.");
+    closeLinkingForm();
+    await loadSupplierPrices(companyId);
   }
 
   return (
@@ -472,74 +547,162 @@ export function ProveedorDetalleClient({
               <tbody className="divide-y divide-stone-200 bg-white">
                 {prices.map((price) => {
                   const status = getPriceStatus(price);
+                  const isLinkingPrice = linkingPriceId === price.id;
+                  const filteredProducts = isLinkingPrice
+                    ? getFilteredProducts(price)
+                    : [];
 
                   return (
-                    <tr key={price.id}>
-                      <td className="px-5 py-4 font-medium text-stone-950">
-                        {getPriceDisplayName(price)}
-                      </td>
-                      <td className="px-5 py-4">
-                        <span
-                          className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusClasses(
-                            status,
-                          )}`}
-                        >
-                          {getStatusLabel(status)}
-                        </span>
-                      </td>
-                      <td className="px-5 py-4 text-right text-stone-700">
-                        {formatMoney(price.cost)}
-                      </td>
-                      <td className="px-5 py-4 text-stone-700">
-                        {formatDate(price.quoted_at)}
-                      </td>
-                      <td className="px-5 py-4">
-                        <div className="flex justify-end gap-2">
-                          {!price.product_id ? (
-                            <>
-                              <button
-                                className="h-9 rounded-md border border-stone-200 px-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                disabled={catalogingPriceId === price.id}
-                                onClick={() => linkPriceToExistingProduct(price)}
-                                type="button"
+                    <Fragment key={price.id}>
+                      <tr>
+                        <td className="px-5 py-4 font-medium text-stone-950">
+                          {getPriceDisplayName(price)}
+                        </td>
+                        <td className="px-5 py-4">
+                          <span
+                            className={`inline-flex rounded-full px-2.5 py-1 text-xs font-semibold ${getStatusClasses(
+                              status,
+                            )}`}
+                          >
+                            {getStatusLabel(status)}
+                          </span>
+                        </td>
+                        <td className="px-5 py-4 text-right text-stone-700">
+                          {formatMoney(price.cost)}
+                        </td>
+                        <td className="px-5 py-4 text-stone-700">
+                          {formatDate(price.quoted_at)}
+                        </td>
+                        <td className="px-5 py-4">
+                          <div className="flex justify-end gap-2">
+                            {!price.product_id ? (
+                              <>
+                                <button
+                                  className="h-9 rounded-md border border-stone-200 px-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  disabled={catalogingPriceId === price.id}
+                                  onClick={() => openLinkingForm(price)}
+                                  type="button"
+                                >
+                                  Vincular producto existente
+                                </button>
+                                <button
+                                  className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  disabled={catalogingPriceId === price.id}
+                                  onClick={() => addPriceProductToCatalog(price)}
+                                  type="button"
+                                >
+                                  {catalogingPriceId === price.id
+                                    ? "Agregando..."
+                                    : "Agregar al catálogo"}
+                                </button>
+                              </>
+                            ) : status === "linked" ? (
+                              <Link
+                                className="inline-flex h-9 items-center rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
+                                href={`/dashboard/productos/${price.product_id}`}
                               >
-                                Vincular producto existente
-                              </button>
-                              <button
-                                className="h-9 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
-                                disabled={catalogingPriceId === price.id}
-                                onClick={() => addPriceProductToCatalog(price)}
-                                type="button"
-                              >
-                                {catalogingPriceId === price.id
-                                  ? "Agregando..."
-                                  : "Agregar al catálogo"}
-                              </button>
-                            </>
-                          ) : status === "linked" ? (
-                            <Link
-                              className="inline-flex h-9 items-center rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
-                              href={`/dashboard/productos/${price.product_id}`}
+                                Editar producto
+                              </Link>
+                            ) : (
+                              <span className="text-sm text-stone-500">
+                                Sin acciones
+                              </span>
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                      {isLinkingPrice ? (
+                        <tr>
+                          <td className="bg-stone-50 px-5 py-4" colSpan={5}>
+                            <form
+                              className="grid gap-4 rounded-lg border border-stone-200 bg-white p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"
+                              onSubmit={(event) => {
+                                event.preventDefault();
+                                linkPriceToSelectedProduct(price);
+                              }}
                             >
-                              Editar producto
-                            </Link>
-                          ) : status === "missing-product" ? (
-                            <button
-                              className="h-9 rounded-md border border-stone-200 px-3 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-                              disabled={catalogingPriceId === price.id}
-                              onClick={() => linkPriceToExistingProduct(price)}
-                              type="button"
-                            >
-                              Vincular otro producto
-                            </button>
-                          ) : (
-                            <span className="text-sm text-stone-500">
-                              Sin acciones
-                            </span>
-                          )}
-                        </div>
-                      </td>
-                    </tr>
+                              <div className="space-y-2">
+                                <label
+                                  className="text-sm font-medium text-stone-800"
+                                  htmlFor={`product-search-${price.id}`}
+                                >
+                                  Buscar producto
+                                </label>
+                                <input
+                                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                  disabled={catalogingPriceId === price.id}
+                                  id={`product-search-${price.id}`}
+                                  onChange={(event) => {
+                                    setLinkSearch(event.target.value);
+                                    setLinkingProductId("");
+                                  }}
+                                  placeholder="Buscar producto"
+                                  type="search"
+                                  value={linkSearch}
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                <label
+                                  className="text-sm font-medium text-stone-800"
+                                  htmlFor={`product-select-${price.id}`}
+                                >
+                                  Producto del catálogo
+                                </label>
+                                <select
+                                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                  disabled={catalogingPriceId === price.id}
+                                  id={`product-select-${price.id}`}
+                                  onChange={(event) =>
+                                    setLinkingProductId(event.target.value)
+                                  }
+                                  value={linkingProductId}
+                                >
+                                  <option value="">Selecciona un producto</option>
+                                  {filteredProducts.map((product) => (
+                                    <option key={product.id} value={product.id}>
+                                      {getProductOptionLabel(product)}
+                                    </option>
+                                  ))}
+                                </select>
+                                {products.length === 0 ? (
+                                  <p className="text-xs text-stone-500">
+                                    No hay productos activos en el catálogo.
+                                  </p>
+                                ) : filteredProducts.length === 0 ? (
+                                  <p className="text-xs text-stone-500">
+                                    No hay productos activos con esa búsqueda.
+                                  </p>
+                                ) : null}
+                              </div>
+
+                              <div className="flex items-end justify-end gap-2">
+                                <button
+                                  className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+                                  disabled={
+                                    catalogingPriceId === price.id ||
+                                    !linkingProductId
+                                  }
+                                  type="submit"
+                                >
+                                  {catalogingPriceId === price.id
+                                    ? "Vinculando..."
+                                    : "Vincular"}
+                                </button>
+                                <button
+                                  className="h-10 rounded-md border border-stone-200 px-4 text-sm font-medium text-stone-800 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                                  disabled={catalogingPriceId === price.id}
+                                  onClick={closeLinkingForm}
+                                  type="button"
+                                >
+                                  Cancelar
+                                </button>
+                              </div>
+                            </form>
+                          </td>
+                        </tr>
+                      ) : null}
+                    </Fragment>
                   );
                 })}
               </tbody>
