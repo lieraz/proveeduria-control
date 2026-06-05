@@ -78,6 +78,14 @@ type LineFormState = {
   notes: string;
 };
 
+type QuickSupplierFormState = {
+  name: string;
+  contact_name: string;
+  phone: string;
+  email: string;
+  notes: string;
+};
+
 type CotizacionDetalleClientProps = {
   quotationId: string;
 };
@@ -93,6 +101,14 @@ const emptyLineForm: LineFormState = {
   final_unit_price: "",
   quantity: "1",
   selected: false,
+  notes: "",
+};
+
+const emptyQuickSupplierForm: QuickSupplierFormState = {
+  name: "",
+  contact_name: "",
+  phone: "",
+  email: "",
   notes: "",
 };
 
@@ -185,10 +201,14 @@ export function CotizacionDetalleClient({
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingSupplier, setIsSavingSupplier] = useState(false);
   const [lines, setLines] = useState<QuotationLineRecord[]>([]);
   const [products, setProducts] = useState<ProductRecord[]>([]);
+  const [quickSupplierForm, setQuickSupplierForm] =
+    useState<QuickSupplierFormState>(emptyQuickSupplierForm);
   const [quotation, setQuotation] = useState<QuotationRecord | null>(null);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showQuickSupplierForm, setShowQuickSupplierForm] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
 
@@ -250,6 +270,27 @@ export function CotizacionDetalleClient({
       setLines((data ?? []) as QuotationLineRecord[]);
     },
     [quotationId, supabase],
+  );
+
+  const loadSuppliers = useCallback(
+    async (activeCompanyId: string) => {
+      const { data, error } = await supabase
+        .from("suppliers")
+        .select("id,name")
+        .eq("company_id", activeCompanyId)
+        .order("name", { ascending: true });
+
+      if (error) {
+        setErrorMessage(error.message);
+        setSuppliers([]);
+        return { error, suppliers: [] };
+      }
+
+      const loadedSuppliers = (data ?? []) as SupplierRecord[];
+      setSuppliers(loadedSuppliers);
+      return { error: null, suppliers: loadedSuppliers };
+    },
+    [supabase],
   );
 
   useEffect(() => {
@@ -334,11 +375,7 @@ export function CotizacionDetalleClient({
           .select("id,name,brand,description,model,unit")
           .eq("company_id", activeCompanyId)
           .order("name", { ascending: true }),
-        supabase
-          .from("suppliers")
-          .select("id,name")
-          .eq("company_id", activeCompanyId)
-          .order("name", { ascending: true }),
+        loadSuppliers(activeCompanyId),
       ]);
 
       const firstError =
@@ -356,14 +393,14 @@ export function CotizacionDetalleClient({
       setClients((clientsResponse.data ?? []) as ClientRecord[]);
       setContacts((contactsResponse.data ?? []) as ContactRecord[]);
       setProducts((productsResponse.data ?? []) as ProductRecord[]);
-      setSuppliers((suppliersResponse.data ?? []) as SupplierRecord[]);
+      setSuppliers(suppliersResponse.suppliers);
 
       await loadLines(activeCompanyId);
       setIsLoading(false);
     }
 
     loadInitialData();
-  }, [loadLines, quotationId, supabase]);
+  }, [loadLines, loadSuppliers, quotationId, supabase]);
 
   function lineDescription(line: QuotationLineRecord) {
     const productName = line.product_id
@@ -453,6 +490,7 @@ export function CotizacionDetalleClient({
 
     setEditingLineId(null);
     setShowCreateForm(false);
+    cancelQuickSupplier();
     setForm(emptyLineForm);
     await loadLines(companyId);
   }
@@ -460,6 +498,7 @@ export function CotizacionDetalleClient({
   function startEditing(line: QuotationLineRecord) {
     setEditingLineId(line.id);
     setShowCreateForm(false);
+    cancelQuickSupplier();
     setForm({
       brand: line.brand ?? "",
       custom_description: line.custom_description ?? "",
@@ -485,6 +524,7 @@ export function CotizacionDetalleClient({
   function cancelEditing() {
     setEditingLineId(null);
     setForm(emptyLineForm);
+    cancelQuickSupplier();
     setErrorMessage("");
   }
 
@@ -492,12 +532,14 @@ export function CotizacionDetalleClient({
     if (showCreateForm) {
       setShowCreateForm(false);
       setForm(emptyLineForm);
+      cancelQuickSupplier();
       setErrorMessage("");
       return;
     }
 
     setEditingLineId(null);
     setForm(emptyLineForm);
+    cancelQuickSupplier();
     setErrorMessage("");
     setShowCreateForm(true);
   }
@@ -505,7 +547,73 @@ export function CotizacionDetalleClient({
   function cancelCreate() {
     setShowCreateForm(false);
     setForm(emptyLineForm);
+    cancelQuickSupplier();
     setErrorMessage("");
+  }
+
+  function toggleQuickSupplier() {
+    if (showQuickSupplierForm) {
+      cancelQuickSupplier();
+      return;
+    }
+
+    setShowQuickSupplierForm(true);
+    setQuickSupplierForm(emptyQuickSupplierForm);
+    setErrorMessage("");
+    setSuccessMessage("");
+  }
+
+  function cancelQuickSupplier() {
+    setShowQuickSupplierForm(false);
+    setQuickSupplierForm(emptyQuickSupplierForm);
+  }
+
+  async function saveQuickSupplier() {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      setSuccessMessage("");
+      return;
+    }
+
+    const supplierName = quickSupplierForm.name.trim();
+
+    if (!supplierName) {
+      setErrorMessage("El nombre del proveedor es obligatorio.");
+      setSuccessMessage("");
+      return;
+    }
+
+    setIsSavingSupplier(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const { data, error } = await supabase
+      .from("suppliers")
+      .insert({
+        company_id: companyId,
+        contact_name: cleanOptionalValue(quickSupplierForm.contact_name),
+        email: cleanOptionalValue(quickSupplierForm.email),
+        name: supplierName,
+        notes: cleanOptionalValue(quickSupplierForm.notes),
+        phone: cleanOptionalValue(quickSupplierForm.phone),
+      })
+      .select("id,name")
+      .single();
+
+    setIsSavingSupplier(false);
+
+    if (error || !data) {
+      setErrorMessage(error?.message ?? "No se pudo guardar el proveedor.");
+      return;
+    }
+
+    await loadSuppliers(companyId);
+    setForm((currentForm) => ({
+      ...currentForm,
+      supplier_id: data.id,
+    }));
+    cancelQuickSupplier();
+    setSuccessMessage("Proveedor agregado.");
   }
 
   async function deleteLine(line: QuotationLineRecord) {
@@ -812,12 +920,12 @@ export function CotizacionDetalleClient({
               >
                 Producto
               </label>
-              <select
-                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                disabled={isLoading || isSaving}
-                id="product_id"
-                onChange={(event) => handleProductChange(event.target.value)}
-                value={form.product_id}
+                <select
+                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                  disabled={isLoading || isSaving || isSavingSupplier}
+                  id="product_id"
+                  onChange={(event) => handleProductChange(event.target.value)}
+                  value={form.product_id}
               >
                 <option value="">Sin producto</option>
                 {products.map((product) => (
@@ -837,7 +945,7 @@ export function CotizacionDetalleClient({
               </label>
               <textarea
                 className="min-h-24 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                disabled={isLoading || isSaving}
+                disabled={isLoading || isSaving || isSavingSupplier}
                 id="custom_description"
                 onChange={(event) =>
                   setForm((currentForm) => ({
@@ -855,7 +963,7 @@ export function CotizacionDetalleClient({
               </label>
               <input
                 className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                disabled={isLoading || isSaving}
+                disabled={isLoading || isSaving || isSavingSupplier}
                 id="brand"
                 onChange={(event) =>
                   setForm((currentForm) => ({
@@ -873,7 +981,7 @@ export function CotizacionDetalleClient({
               </label>
               <input
                 className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                disabled={isLoading || isSaving}
+                disabled={isLoading || isSaving || isSavingSupplier}
                 id="model"
                 onChange={(event) =>
                   setForm((currentForm) => ({
@@ -885,32 +993,180 @@ export function CotizacionDetalleClient({
               />
             </div>
 
-            <div className="space-y-2">
-              <label
-                className="text-sm font-medium text-stone-800"
-                htmlFor="supplier_id"
-              >
-                Proveedor
-              </label>
-              <select
-                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                disabled={isLoading || isSaving}
-                id="supplier_id"
-                onChange={(event) =>
-                  setForm((currentForm) => ({
-                    ...currentForm,
-                    supplier_id: event.target.value,
-                  }))
-                }
-                value={form.supplier_id}
-              >
-                <option value="">Sin proveedor</option>
-                {suppliers.map((supplier) => (
-                  <option key={supplier.id} value={supplier.id}>
-                    {supplier.name}
-                  </option>
-                ))}
-              </select>
+            <div className="space-y-2 lg:col-span-3">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
+                <div className="flex-1 space-y-2">
+                  <label
+                    className="text-sm font-medium text-stone-800"
+                    htmlFor="supplier_id"
+                  >
+                    Proveedor
+                  </label>
+                  <select
+                    className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                    disabled={isLoading || isSaving || isSavingSupplier}
+                    id="supplier_id"
+                    onChange={(event) =>
+                      setForm((currentForm) => ({
+                        ...currentForm,
+                        supplier_id: event.target.value,
+                      }))
+                    }
+                    value={form.supplier_id}
+                  >
+                    <option value="">Sin proveedor</option>
+                    {suppliers.map((supplier) => (
+                      <option key={supplier.id} value={supplier.id}>
+                        {supplier.name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <button
+                  aria-expanded={showQuickSupplierForm}
+                  className="h-10 rounded-md border border-emerald-200 px-3 text-sm font-medium text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  disabled={isLoading || isSaving || isSavingSupplier}
+                  onClick={toggleQuickSupplier}
+                  type="button"
+                >
+                  Nuevo proveedor
+                </button>
+              </div>
+
+              {showQuickSupplierForm ? (
+                <div className="grid gap-3 rounded-md border border-stone-200 bg-stone-50 p-4 md:grid-cols-2 lg:grid-cols-4">
+                  <div className="space-y-2 md:col-span-2 lg:col-span-4">
+                    <h5 className="text-sm font-semibold text-stone-950">
+                      Nuevo proveedor
+                    </h5>
+                  </div>
+                  <div className="space-y-2">
+                    <label
+                      className="text-sm font-medium text-stone-800"
+                      htmlFor="quick_supplier_name"
+                    >
+                      Nombre
+                    </label>
+                    <input
+                      className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      disabled={isSavingSupplier}
+                      id="quick_supplier_name"
+                      onChange={(event) =>
+                        setQuickSupplierForm((currentForm) => ({
+                          ...currentForm,
+                          name: event.target.value,
+                        }))
+                      }
+                      required
+                      type="text"
+                      value={quickSupplierForm.name}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label
+                      className="text-sm font-medium text-stone-800"
+                      htmlFor="quick_supplier_contact"
+                    >
+                      Contacto
+                    </label>
+                    <input
+                      className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      disabled={isSavingSupplier}
+                      id="quick_supplier_contact"
+                      onChange={(event) =>
+                        setQuickSupplierForm((currentForm) => ({
+                          ...currentForm,
+                          contact_name: event.target.value,
+                        }))
+                      }
+                      type="text"
+                      value={quickSupplierForm.contact_name}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label
+                      className="text-sm font-medium text-stone-800"
+                      htmlFor="quick_supplier_phone"
+                    >
+                      Teléfono
+                    </label>
+                    <input
+                      className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      disabled={isSavingSupplier}
+                      id="quick_supplier_phone"
+                      onChange={(event) =>
+                        setQuickSupplierForm((currentForm) => ({
+                          ...currentForm,
+                          phone: event.target.value,
+                        }))
+                      }
+                      type="tel"
+                      value={quickSupplierForm.phone}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <label
+                      className="text-sm font-medium text-stone-800"
+                      htmlFor="quick_supplier_email"
+                    >
+                      Correo
+                    </label>
+                    <input
+                      className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      disabled={isSavingSupplier}
+                      id="quick_supplier_email"
+                      onChange={(event) =>
+                        setQuickSupplierForm((currentForm) => ({
+                          ...currentForm,
+                          email: event.target.value,
+                        }))
+                      }
+                      type="email"
+                      value={quickSupplierForm.email}
+                    />
+                  </div>
+                  <div className="space-y-2 md:col-span-2 lg:col-span-4">
+                    <label
+                      className="text-sm font-medium text-stone-800"
+                      htmlFor="quick_supplier_notes"
+                    >
+                      Notas
+                    </label>
+                    <textarea
+                      className="min-h-20 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                      disabled={isSavingSupplier}
+                      id="quick_supplier_notes"
+                      onChange={(event) =>
+                        setQuickSupplierForm((currentForm) => ({
+                          ...currentForm,
+                          notes: event.target.value,
+                        }))
+                      }
+                      value={quickSupplierForm.notes}
+                    />
+                  </div>
+                  <div className="flex flex-col gap-2 sm:flex-row md:col-span-2 lg:col-span-4">
+                    <button
+                      className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+                      disabled={isSavingSupplier}
+                      onClick={saveQuickSupplier}
+                      type="button"
+                    >
+                      {isSavingSupplier
+                        ? "Guardando..."
+                        : "Guardar proveedor"}
+                    </button>
+                    <button
+                      className="h-10 rounded-md border border-stone-300 px-4 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                      disabled={isSavingSupplier}
+                      onClick={cancelQuickSupplier}
+                      type="button"
+                    >
+                      Cancelar
+                    </button>
+                  </div>
+                </div>
+              ) : null}
             </div>
 
             {[
@@ -925,7 +1181,7 @@ export function CotizacionDetalleClient({
                 </label>
                 <input
                   className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                  disabled={isLoading || isSaving}
+                  disabled={isLoading || isSaving || isSavingSupplier}
                   id={id}
                   min={id === "quantity" ? "0.01" : undefined}
                   onChange={(event) =>
@@ -946,7 +1202,7 @@ export function CotizacionDetalleClient({
               <input
                 checked={form.selected}
                 className="h-4 w-4 rounded border-stone-300 text-emerald-800"
-                disabled={isLoading || isSaving}
+                disabled={isLoading || isSaving || isSavingSupplier}
                 onChange={(event) =>
                   setForm((currentForm) => ({
                     ...currentForm,
@@ -964,7 +1220,7 @@ export function CotizacionDetalleClient({
               </label>
               <textarea
                 className="min-h-24 w-full resize-y rounded-md border border-stone-300 bg-white px-3 py-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                disabled={isLoading || isSaving}
+                disabled={isLoading || isSaving || isSavingSupplier}
                 id="notes"
                 onChange={(event) =>
                   setForm((currentForm) => ({
@@ -979,7 +1235,7 @@ export function CotizacionDetalleClient({
             <div className="flex flex-col gap-3 sm:flex-row lg:col-span-3">
               <button
                 className="h-11 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
-                disabled={isLoading || isSaving}
+                disabled={isLoading || isSaving || isSavingSupplier}
                 type="submit"
               >
                 {isSaving
