@@ -7,6 +7,7 @@ import {
   ArchiveBadge,
   ArchiveFilter,
   ArchiveFilterToggle,
+  BulkArchiveActionBar,
 } from "@/app/dashboard/archive-controls";
 import { createClient } from "@/src/lib/supabase/client";
 
@@ -196,6 +197,7 @@ export function CotizacionesClient() {
   const [errorMessage, setErrorMessage] = useState("");
   const [form, setForm] = useState<QuotationFormState>(emptyForm);
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [isUpdatingArchiveId, setIsUpdatingArchiveId] = useState<string | null>(
     null,
   );
@@ -205,10 +207,14 @@ export function CotizacionesClient() {
   const [quotations, setQuotations] = useState<QuotationRecord[]>([]);
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [search, setSearch] = useState("");
+  const [selectedQuotationIds, setSelectedQuotationIds] = useState<
+    Set<string>
+  >(new Set());
   const [totalsByQuotationId, setTotalsByQuotationId] = useState<
     Map<string, number>
   >(new Map());
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
 
   const clientsById = useMemo(
     () => new Map(clients.map((client) => [client.id, client])),
@@ -222,6 +228,28 @@ export function CotizacionesClient() {
     () => contacts.filter((contact) => contact.client_id === form.client_id),
     [contacts, form.client_id],
   );
+  const selectedQuotations = useMemo(
+    () =>
+      quotations.filter((quotation) => selectedQuotationIds.has(quotation.id)),
+    [quotations, selectedQuotationIds],
+  );
+  const selectedArchivedQuotationIds = useMemo(
+    () =>
+      selectedQuotations
+        .filter((quotation) => quotation.archived_at)
+        .map((quotation) => quotation.id),
+    [selectedQuotations],
+  );
+  const selectedActiveQuotationIds = useMemo(
+    () =>
+      selectedQuotations
+        .filter((quotation) => !quotation.archived_at)
+        .map((quotation) => quotation.id),
+    [selectedQuotations],
+  );
+  const areAllVisibleQuotationsSelected =
+    quotations.length > 0 &&
+    quotations.every((quotation) => selectedQuotationIds.has(quotation.id));
 
   const loadQuotations = useCallback(
     async (
@@ -302,6 +330,7 @@ export function CotizacionesClient() {
     async function loadInitialData() {
       setIsLoading(true);
       setErrorMessage("");
+      setSuccessMessage("");
 
       const {
         data: { user },
@@ -401,12 +430,14 @@ export function CotizacionesClient() {
     }
 
     setIsSearching(true);
+    setSelectedQuotationIds(new Set());
     await loadQuotations(companyId, search, clientsById, archiveFilter);
     setIsSearching(false);
   }
 
   async function handleArchiveFilterChange(nextFilter: ArchiveFilter) {
     setArchiveFilter(nextFilter);
+    setSelectedQuotationIds(new Set());
 
     if (!companyId) {
       return;
@@ -437,6 +468,7 @@ export function CotizacionesClient() {
 
     setIsSaving(true);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const payload = {
       client_id: form.client_id,
@@ -469,6 +501,33 @@ export function CotizacionesClient() {
     setShowCreateForm(false);
     setForm(emptyForm());
     await loadQuotations(companyId, search, clientsById, archiveFilter);
+  }
+
+  function toggleQuotationSelection(quotationId: string) {
+    setSelectedQuotationIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      if (nextIds.has(quotationId)) {
+        nextIds.delete(quotationId);
+      } else {
+        nextIds.add(quotationId);
+      }
+      return nextIds;
+    });
+  }
+
+  function toggleAllVisibleQuotations() {
+    setSelectedQuotationIds((currentIds) => {
+      if (areAllVisibleQuotationsSelected) {
+        const nextIds = new Set(currentIds);
+        quotations.forEach((quotation) => nextIds.delete(quotation.id));
+        return nextIds;
+      }
+
+      return new Set([
+        ...currentIds,
+        ...quotations.map((quotation) => quotation.id),
+      ]);
+    });
   }
 
   function handleRequestChange(requestId: string) {
@@ -541,6 +600,7 @@ export function CotizacionesClient() {
 
     setIsUpdatingArchiveId(quotation.id);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const {
       data: { user },
@@ -585,6 +645,7 @@ export function CotizacionesClient() {
 
     setIsUpdatingArchiveId(quotation.id);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const { error } = await supabase
       .from("quotations")
@@ -603,6 +664,95 @@ export function CotizacionesClient() {
       return;
     }
 
+    await loadQuotations(companyId, search, clientsById, archiveFilter);
+  }
+
+  async function bulkArchiveQuotations() {
+    if (!companyId || selectedActiveQuotationIds.length === 0) {
+      return;
+    }
+
+    const shouldArchive = window.confirm(
+      "¿Archivar los registros seleccionados?",
+    );
+
+    if (!shouldArchive) {
+      return;
+    }
+
+    setIsBulkUpdating(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsBulkUpdating(false);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("quotations")
+      .update({
+        archived_at: new Date().toISOString(),
+        archived_by: user.id,
+        archive_reason: "Archivado en lote",
+      })
+      .eq("company_id", companyId)
+      .in("id", selectedActiveQuotationIds);
+
+    setIsBulkUpdating(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSelectedQuotationIds(new Set());
+    setSuccessMessage("Cotizaciones archivadas correctamente.");
+    await loadQuotations(companyId, search, clientsById, archiveFilter);
+  }
+
+  async function bulkRestoreQuotations() {
+    if (!companyId || selectedArchivedQuotationIds.length === 0) {
+      return;
+    }
+
+    const shouldRestore = window.confirm(
+      "¿Restaurar los registros seleccionados?",
+    );
+
+    if (!shouldRestore) {
+      return;
+    }
+
+    setIsBulkUpdating(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const { error } = await supabase
+      .from("quotations")
+      .update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+      })
+      .eq("company_id", companyId)
+      .in("id", selectedArchivedQuotationIds);
+
+    setIsBulkUpdating(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSelectedQuotationIds(new Set());
+    setSuccessMessage("Cotizaciones restauradas correctamente.");
     await loadQuotations(companyId, search, clientsById, archiveFilter);
   }
 
@@ -896,6 +1046,21 @@ export function CotizacionesClient() {
           </div>
         ) : null}
 
+        {successMessage ? (
+          <div className="border-b border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
+            {successMessage}
+          </div>
+        ) : null}
+
+        <BulkArchiveActionBar
+          archivedCount={selectedArchivedQuotationIds.length}
+          disabled={isBulkUpdating}
+          filter={archiveFilter}
+          onArchive={bulkArchiveQuotations}
+          onRestore={bulkRestoreQuotations}
+          selectedCount={selectedQuotations.length}
+        />
+
         {isLoading ? (
           <div className="p-5 text-sm font-medium text-stone-600">
             Cargando cotizaciones...
@@ -909,6 +1074,15 @@ export function CotizacionesClient() {
             <table className="min-w-full divide-y divide-stone-200 text-left text-sm">
               <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
                 <tr>
+                  <th className="print:hidden px-5 py-3">
+                    <input
+                      aria-label="Seleccionar cotizaciones visibles"
+                      checked={areAllVisibleQuotationsSelected}
+                      className="h-4 w-4 rounded border-stone-300 text-emerald-800"
+                      onChange={toggleAllVisibleQuotations}
+                      type="checkbox"
+                    />
+                  </th>
                   <th className="px-5 py-3">Folio</th>
                   <th className="px-5 py-3">Cliente</th>
                   <th className="px-5 py-3">Dependencia/contacto</th>
@@ -922,6 +1096,15 @@ export function CotizacionesClient() {
               <tbody className="divide-y divide-stone-200 bg-white">
                 {quotations.map((quotation) => (
                   <tr key={quotation.id}>
+                    <td className="print:hidden px-5 py-4">
+                      <input
+                        aria-label={`Seleccionar cotización ${quotation.folio || "sin folio"}`}
+                        checked={selectedQuotationIds.has(quotation.id)}
+                        className="h-4 w-4 rounded border-stone-300 text-emerald-800"
+                        onChange={() => toggleQuotationSelection(quotation.id)}
+                        type="checkbox"
+                      />
+                    </td>
                     <td className="px-5 py-4 font-medium text-stone-950">
                       <Link
                         className="text-emerald-800 hover:text-emerald-950 hover:underline"

@@ -49,3 +49,61 @@ export function ArchiveBadge() {
     </span>
   );
 }
+
+type BulkArchiveActionBarProps = {
+  archivedCount: number;
+  disabled?: boolean;
+  filter: ArchiveFilter;
+  onArchive: () => void;
+  onRestore: () => void;
+  selectedCount: number;
+};
+
+export function BulkArchiveActionBar({
+  archivedCount,
+  disabled = false,
+  filter,
+  onArchive,
+  onRestore,
+  selectedCount,
+}: BulkArchiveActionBarProps) {
+  const activeCount = selectedCount - archivedCount;
+  const canArchive = filter === "active" || filter === "all";
+  const canRestore = filter === "archived" || filter === "all";
+
+  if (selectedCount === 0) {
+    return null;
+  }
+
+  return (
+    <div className="print:hidden border-b border-stone-200 bg-emerald-50 px-5 py-3">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm font-semibold text-emerald-900">
+          {selectedCount} seleccionados
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {canArchive && activeCount > 0 ? (
+            <button
+              className="h-9 rounded-md bg-emerald-800 px-3 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+              disabled={disabled}
+              onClick={onArchive}
+              type="button"
+            >
+              Archivar seleccionados
+            </button>
+          ) : null}
+          {canRestore && archivedCount > 0 ? (
+            <button
+              className="h-9 rounded-md border border-emerald-200 bg-white px-3 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={disabled}
+              onClick={onRestore}
+              type="button"
+            >
+              Restaurar seleccionados
+            </button>
+          ) : null}
+        </div>
+      </div>
+    </div>
+  );
+}

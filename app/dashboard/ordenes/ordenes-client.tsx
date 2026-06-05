@@ -8,6 +8,7 @@ import {
   ArchiveBadge,
   ArchiveFilter,
   ArchiveFilterToggle,
+  BulkArchiveActionBar,
 } from "@/app/dashboard/archive-controls";
 import { createClient } from "@/src/lib/supabase/client";
 
@@ -168,6 +169,7 @@ export function OrdenesClient() {
   const [errorMessage, setErrorMessage] = useState("");
   const [form, setForm] = useState<OrderFormState>(emptyForm);
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isSearching, setIsSearching] = useState(false);
@@ -180,7 +182,11 @@ export function OrdenesClient() {
   const [quotations, setQuotations] = useState<QuotationRecord[]>([]);
   const [search, setSearch] = useState("");
   const [selectedLineIds, setSelectedLineIds] = useState<Set<string>>(new Set());
+  const [selectedOrderIds, setSelectedOrderIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
   const [totalsByOrderId, setTotalsByOrderId] = useState<Map<string, number>>(
     new Map(),
   );
@@ -201,6 +207,26 @@ export function OrdenesClient() {
     () => quotations.find((quotation) => quotation.id === form.quotation_id),
     [form.quotation_id, quotations],
   );
+  const selectedOrders = useMemo(
+    () => orders.filter((order) => selectedOrderIds.has(order.id)),
+    [orders, selectedOrderIds],
+  );
+  const selectedArchivedOrderIds = useMemo(
+    () =>
+      selectedOrders
+        .filter((order) => order.archived_at)
+        .map((order) => order.id),
+    [selectedOrders],
+  );
+  const selectedActiveOrderIds = useMemo(
+    () =>
+      selectedOrders
+        .filter((order) => !order.archived_at)
+        .map((order) => order.id),
+    [selectedOrders],
+  );
+  const areAllVisibleOrdersSelected =
+    orders.length > 0 && orders.every((order) => selectedOrderIds.has(order.id));
 
   const loadOrders = useCallback(
     async (
@@ -287,6 +313,7 @@ export function OrdenesClient() {
     async function loadInitialData() {
       setIsLoading(true);
       setErrorMessage("");
+      setSuccessMessage("");
 
       const {
         data: { user },
@@ -413,12 +440,14 @@ export function OrdenesClient() {
     }
 
     setIsSearching(true);
+    setSelectedOrderIds(new Set());
     await loadOrders(companyId, search, quotationsById, clientsById, archiveFilter);
     setIsSearching(false);
   }
 
   async function handleArchiveFilterChange(nextFilter: ArchiveFilter) {
     setArchiveFilter(nextFilter);
+    setSelectedOrderIds(new Set());
 
     if (!companyId) {
       return;
@@ -443,6 +472,7 @@ export function OrdenesClient() {
 
     setIsUpdatingArchiveId(order.id);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const {
       data: { user },
@@ -483,6 +513,7 @@ export function OrdenesClient() {
 
     setIsUpdatingArchiveId(order.id);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const { error } = await supabase
       .from("internal_orders")
@@ -501,6 +532,119 @@ export function OrdenesClient() {
       return;
     }
 
+    await loadOrders(companyId, search, quotationsById, clientsById, archiveFilter);
+  }
+
+  function toggleOrderSelection(orderId: string) {
+    setSelectedOrderIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      if (nextIds.has(orderId)) {
+        nextIds.delete(orderId);
+      } else {
+        nextIds.add(orderId);
+      }
+      return nextIds;
+    });
+  }
+
+  function toggleAllVisibleOrders() {
+    setSelectedOrderIds((currentIds) => {
+      if (areAllVisibleOrdersSelected) {
+        const nextIds = new Set(currentIds);
+        orders.forEach((order) => nextIds.delete(order.id));
+        return nextIds;
+      }
+
+      return new Set([...currentIds, ...orders.map((order) => order.id)]);
+    });
+  }
+
+  async function bulkArchiveOrders() {
+    if (!companyId || selectedActiveOrderIds.length === 0) {
+      return;
+    }
+
+    const shouldArchive = window.confirm(
+      "¿Archivar los registros seleccionados?",
+    );
+
+    if (!shouldArchive) {
+      return;
+    }
+
+    setIsBulkUpdating(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsBulkUpdating(false);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("internal_orders")
+      .update({
+        archived_at: new Date().toISOString(),
+        archived_by: user.id,
+        archive_reason: "Archivado en lote",
+      })
+      .eq("company_id", companyId)
+      .in("id", selectedActiveOrderIds);
+
+    setIsBulkUpdating(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSelectedOrderIds(new Set());
+    setSuccessMessage("Órdenes archivadas correctamente.");
+    await loadOrders(companyId, search, quotationsById, clientsById, archiveFilter);
+  }
+
+  async function bulkRestoreOrders() {
+    if (!companyId || selectedArchivedOrderIds.length === 0) {
+      return;
+    }
+
+    const shouldRestore = window.confirm(
+      "¿Restaurar los registros seleccionados?",
+    );
+
+    if (!shouldRestore) {
+      return;
+    }
+
+    setIsBulkUpdating(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const { error } = await supabase
+      .from("internal_orders")
+      .update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+      })
+      .eq("company_id", companyId)
+      .in("id", selectedArchivedOrderIds);
+
+    setIsBulkUpdating(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSelectedOrderIds(new Set());
+    setSuccessMessage("Órdenes restauradas correctamente.");
     await loadOrders(companyId, search, quotationsById, clientsById, archiveFilter);
   }
 
@@ -543,6 +687,7 @@ export function OrdenesClient() {
     setQuotationLines([]);
     setSelectedLineIds(new Set());
     setErrorMessage("");
+    setSuccessMessage("");
     setShowCreateForm(true);
   }
 
@@ -583,6 +728,7 @@ export function OrdenesClient() {
 
     setIsSaving(true);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const { data: orderData, error: orderError } = await supabase
       .from("internal_orders")
@@ -838,6 +984,21 @@ export function OrdenesClient() {
           </div>
         ) : null}
 
+        {successMessage ? (
+          <div className="border-b border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
+            {successMessage}
+          </div>
+        ) : null}
+
+        <BulkArchiveActionBar
+          archivedCount={selectedArchivedOrderIds.length}
+          disabled={isBulkUpdating}
+          filter={archiveFilter}
+          onArchive={bulkArchiveOrders}
+          onRestore={bulkRestoreOrders}
+          selectedCount={selectedOrders.length}
+        />
+
         {isLoading ? (
           <div className="p-5 text-sm font-medium text-stone-600">
             Cargando órdenes...
@@ -851,6 +1012,15 @@ export function OrdenesClient() {
             <table className="min-w-full divide-y divide-stone-200 text-left text-sm">
               <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
                 <tr>
+                  <th className="print:hidden px-5 py-3">
+                    <input
+                      aria-label="Seleccionar órdenes visibles"
+                      checked={areAllVisibleOrdersSelected}
+                      className="h-4 w-4 rounded border-stone-300 text-emerald-800"
+                      onChange={toggleAllVisibleOrders}
+                      type="checkbox"
+                    />
+                  </th>
                   <th className="px-5 py-3">Folio</th>
                   <th className="px-5 py-3">Cliente</th>
                   <th className="px-5 py-3">Cotización</th>
@@ -869,6 +1039,15 @@ export function OrdenesClient() {
 
                   return (
                     <tr key={order.id}>
+                      <td className="print:hidden px-5 py-4">
+                        <input
+                          aria-label={`Seleccionar orden ${order.folio || "sin folio"}`}
+                          checked={selectedOrderIds.has(order.id)}
+                          className="h-4 w-4 rounded border-stone-300 text-emerald-800"
+                          onChange={() => toggleOrderSelection(order.id)}
+                          type="checkbox"
+                        />
+                      </td>
                       <td className="px-5 py-4 font-medium text-stone-950">
                         <Link
                           className="text-emerald-800 hover:text-emerald-950 hover:underline"

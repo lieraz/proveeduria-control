@@ -6,6 +6,7 @@ import {
   ArchiveBadge,
   ArchiveFilter,
   ArchiveFilterToggle,
+  BulkArchiveActionBar,
 } from "@/app/dashboard/archive-controls";
 import { createClient } from "@/src/lib/supabase/client";
 
@@ -200,6 +201,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   const [expandedLineIds, setExpandedLineIds] = useState<Set<string>>(new Set());
   const [form, setForm] = useState<LineFormState>(emptyLineForm);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isBulkUpdatingPurchases, setIsBulkUpdatingPurchases] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [lines, setLines] = useState<InternalOrderLineRecord[]>([]);
@@ -212,6 +214,9 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   >([]);
   const [purchaseRuns, setPurchaseRuns] = useState<PurchaseRunRecord[]>([]);
   const [quotations, setQuotations] = useState<QuotationRecord[]>([]);
+  const [selectedPurchaseRunIds, setSelectedPurchaseRunIds] = useState<
+    Set<string>
+  >(new Set());
   const [showAddForm, setShowAddForm] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
@@ -255,6 +260,28 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     });
     return groupedLines;
   }, [purchaseRunLines]);
+  const selectedPurchaseRuns = useMemo(
+    () =>
+      purchaseRuns.filter((run) => selectedPurchaseRunIds.has(run.id)),
+    [purchaseRuns, selectedPurchaseRunIds],
+  );
+  const selectedArchivedPurchaseRunIds = useMemo(
+    () =>
+      selectedPurchaseRuns
+        .filter((run) => run.archived_at)
+        .map((run) => run.id),
+    [selectedPurchaseRuns],
+  );
+  const selectedActivePurchaseRunIds = useMemo(
+    () =>
+      selectedPurchaseRuns
+        .filter((run) => !run.archived_at)
+        .map((run) => run.id),
+    [selectedPurchaseRuns],
+  );
+  const areAllVisiblePurchaseRunsSelected =
+    purchaseRuns.length > 0 &&
+    purchaseRuns.every((run) => selectedPurchaseRunIds.has(run.id));
 
   const pendingLines = useMemo(
     () => lines.filter((line) => (line.status ?? "pendiente") === "pendiente"),
@@ -669,6 +696,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
 
   async function handlePurchaseArchiveFilterChange(nextFilter: ArchiveFilter) {
     setPurchaseArchiveFilter(nextFilter);
+    setSelectedPurchaseRunIds(new Set());
 
     if (!companyId) {
       return;
@@ -691,6 +719,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
 
     setUpdatingPurchaseArchiveId(run.id);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const {
       data: { user },
@@ -731,6 +760,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
 
     setUpdatingPurchaseArchiveId(run.id);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const { error } = await supabase
       .from("purchase_runs")
@@ -749,6 +779,119 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
       return;
     }
 
+    await loadPurchaseRuns(companyId, purchaseArchiveFilter);
+  }
+
+  function togglePurchaseRunSelection(runId: string) {
+    setSelectedPurchaseRunIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      if (nextIds.has(runId)) {
+        nextIds.delete(runId);
+      } else {
+        nextIds.add(runId);
+      }
+      return nextIds;
+    });
+  }
+
+  function toggleAllVisiblePurchaseRuns() {
+    setSelectedPurchaseRunIds((currentIds) => {
+      if (areAllVisiblePurchaseRunsSelected) {
+        const nextIds = new Set(currentIds);
+        purchaseRuns.forEach((run) => nextIds.delete(run.id));
+        return nextIds;
+      }
+
+      return new Set([...currentIds, ...purchaseRuns.map((run) => run.id)]);
+    });
+  }
+
+  async function bulkArchivePurchaseRuns() {
+    if (!companyId || selectedActivePurchaseRunIds.length === 0) {
+      return;
+    }
+
+    const shouldArchive = window.confirm(
+      "¿Archivar los registros seleccionados?",
+    );
+
+    if (!shouldArchive) {
+      return;
+    }
+
+    setIsBulkUpdatingPurchases(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsBulkUpdatingPurchases(false);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("purchase_runs")
+      .update({
+        archived_at: new Date().toISOString(),
+        archived_by: user.id,
+        archive_reason: "Archivado en lote",
+      })
+      .eq("company_id", companyId)
+      .in("id", selectedActivePurchaseRunIds);
+
+    setIsBulkUpdatingPurchases(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSelectedPurchaseRunIds(new Set());
+    setSuccessMessage("Compras archivadas correctamente.");
+    await loadPurchaseRuns(companyId, purchaseArchiveFilter);
+  }
+
+  async function bulkRestorePurchaseRuns() {
+    if (!companyId || selectedArchivedPurchaseRunIds.length === 0) {
+      return;
+    }
+
+    const shouldRestore = window.confirm(
+      "¿Restaurar los registros seleccionados?",
+    );
+
+    if (!shouldRestore) {
+      return;
+    }
+
+    setIsBulkUpdatingPurchases(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const { error } = await supabase
+      .from("purchase_runs")
+      .update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+      })
+      .eq("company_id", companyId)
+      .in("id", selectedArchivedPurchaseRunIds);
+
+    setIsBulkUpdatingPurchases(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSelectedPurchaseRunIds(new Set());
+    setSuccessMessage("Compras restauradas correctamente.");
     await loadPurchaseRuns(companyId, purchaseArchiveFilter);
   }
 
@@ -1220,6 +1363,16 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
               <p className="mt-1 text-sm text-stone-600">
                 Cada registro está vinculado a esta orden interna.
               </p>
+              <label className="print:hidden mt-3 inline-flex items-center gap-2 text-sm font-medium text-stone-700">
+                <input
+                  aria-label="Seleccionar compras visibles"
+                  checked={areAllVisiblePurchaseRunsSelected}
+                  className="h-4 w-4 rounded border-stone-300 text-emerald-800"
+                  onChange={toggleAllVisiblePurchaseRuns}
+                  type="checkbox"
+                />
+                Seleccionar visibles
+              </label>
             </div>
             <ArchiveFilterToggle
               disabled={isLoading}
@@ -1228,6 +1381,15 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
             />
           </div>
         </div>
+
+        <BulkArchiveActionBar
+          archivedCount={selectedArchivedPurchaseRunIds.length}
+          disabled={isBulkUpdatingPurchases}
+          filter={purchaseArchiveFilter}
+          onArchive={bulkArchivePurchaseRuns}
+          onRestore={bulkRestorePurchaseRuns}
+          selectedCount={selectedPurchaseRuns.length}
+        />
 
         {purchaseRuns.length === 0 ? (
           <div className="p-5 text-sm text-stone-600">
@@ -1245,13 +1407,22 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
               return (
                 <article className="p-5" key={run.id}>
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-                    <div>
-                      <h4 className="font-semibold text-stone-950">
-                        {supplierName}
-                      </h4>
-                      <p className="mt-1 text-sm text-stone-600">
-                        Compra · {run.status || "generada"} · {formatDate(run.created_at)}
-                      </p>
+                    <div className="flex items-start gap-3">
+                      <input
+                        aria-label={`Seleccionar compra de ${supplierName}`}
+                        checked={selectedPurchaseRunIds.has(run.id)}
+                        className="print:hidden mt-1 h-4 w-4 rounded border-stone-300 text-emerald-800"
+                        onChange={() => togglePurchaseRunSelection(run.id)}
+                        type="checkbox"
+                      />
+                      <div>
+                        <h4 className="font-semibold text-stone-950">
+                          {supplierName}
+                        </h4>
+                        <p className="mt-1 text-sm text-stone-600">
+                          Compra · {run.status || "generada"} · {formatDate(run.created_at)}
+                        </p>
+                      </div>
                     </div>
                     <div className="flex flex-wrap justify-start gap-2 sm:justify-end">
                       {run.archived_at ? <ArchiveBadge /> : null}

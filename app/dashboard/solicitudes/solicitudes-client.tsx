@@ -7,6 +7,7 @@ import {
   ArchiveBadge,
   ArchiveFilter,
   ArchiveFilterToggle,
+  BulkArchiveActionBar,
 } from "@/app/dashboard/archive-controls";
 import { createClient } from "@/src/lib/supabase/client";
 
@@ -201,6 +202,7 @@ export function SolicitudesClient() {
   const [errorMessage, setErrorMessage] = useState("");
   const [form, setForm] = useState<RequestFormState>(emptyForm);
   const [archiveFilter, setArchiveFilter] = useState<ArchiveFilter>("active");
+  const [isBulkUpdating, setIsBulkUpdating] = useState(false);
   const [isUpdatingArchiveId, setIsUpdatingArchiveId] = useState<string | null>(
     null,
   );
@@ -212,7 +214,11 @@ export function SolicitudesClient() {
   >(new Map());
   const [requests, setRequests] = useState<RequestRecord[]>([]);
   const [search, setSearch] = useState("");
+  const [selectedRequestIds, setSelectedRequestIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [successMessage, setSuccessMessage] = useState("");
 
   const clientsById = useMemo(
     () => new Map(clients.map((client) => [client.id, client])),
@@ -227,6 +233,27 @@ export function SolicitudesClient() {
       contacts.filter((contact) => contact.client_id === form.client_id),
     [contacts, form.client_id],
   );
+  const selectedRequests = useMemo(
+    () => requests.filter((request) => selectedRequestIds.has(request.id)),
+    [requests, selectedRequestIds],
+  );
+  const selectedArchivedRequestIds = useMemo(
+    () =>
+      selectedRequests
+        .filter((request) => request.archived_at)
+        .map((request) => request.id),
+    [selectedRequests],
+  );
+  const selectedActiveRequestIds = useMemo(
+    () =>
+      selectedRequests
+        .filter((request) => !request.archived_at)
+        .map((request) => request.id),
+    [selectedRequests],
+  );
+  const areAllVisibleRequestsSelected =
+    requests.length > 0 &&
+    requests.every((request) => selectedRequestIds.has(request.id));
 
   const loadRequests = useCallback(
     async (
@@ -306,6 +333,7 @@ export function SolicitudesClient() {
     async function loadInitialData() {
       setIsLoading(true);
       setErrorMessage("");
+      setSuccessMessage("");
 
       const {
         data: { user },
@@ -393,12 +421,14 @@ export function SolicitudesClient() {
     }
 
     setIsSearching(true);
+    setSelectedRequestIds(new Set());
     await loadRequests(companyId, search, clientsById, archiveFilter);
     setIsSearching(false);
   }
 
   async function handleArchiveFilterChange(nextFilter: ArchiveFilter) {
     setArchiveFilter(nextFilter);
+    setSelectedRequestIds(new Set());
 
     if (!companyId) {
       return;
@@ -429,6 +459,7 @@ export function SolicitudesClient() {
 
     setIsSaving(true);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const payload = {
       client_id: form.client_id,
@@ -464,6 +495,33 @@ export function SolicitudesClient() {
     setShowCreateForm(false);
     setForm(emptyForm());
     await loadRequests(companyId, search, clientsById, archiveFilter);
+  }
+
+  function toggleRequestSelection(requestId: string) {
+    setSelectedRequestIds((currentIds) => {
+      const nextIds = new Set(currentIds);
+      if (nextIds.has(requestId)) {
+        nextIds.delete(requestId);
+      } else {
+        nextIds.add(requestId);
+      }
+      return nextIds;
+    });
+  }
+
+  function toggleAllVisibleRequests() {
+    setSelectedRequestIds((currentIds) => {
+      if (areAllVisibleRequestsSelected) {
+        const nextIds = new Set(currentIds);
+        requests.forEach((request) => nextIds.delete(request.id));
+        return nextIds;
+      }
+
+      return new Set([
+        ...currentIds,
+        ...requests.map((request) => request.id),
+      ]);
+    });
   }
 
   function startEditing(request: RequestRecord) {
@@ -532,6 +590,7 @@ export function SolicitudesClient() {
 
     setIsUpdatingArchiveId(request.id);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const {
       data: { user },
@@ -576,6 +635,7 @@ export function SolicitudesClient() {
 
     setIsUpdatingArchiveId(request.id);
     setErrorMessage("");
+    setSuccessMessage("");
 
     const { error } = await supabase
       .from("client_requests")
@@ -594,6 +654,95 @@ export function SolicitudesClient() {
       return;
     }
 
+    await loadRequests(companyId, search, clientsById, archiveFilter);
+  }
+
+  async function bulkArchiveRequests() {
+    if (!companyId || selectedActiveRequestIds.length === 0) {
+      return;
+    }
+
+    const shouldArchive = window.confirm(
+      "¿Archivar los registros seleccionados?",
+    );
+
+    if (!shouldArchive) {
+      return;
+    }
+
+    setIsBulkUpdating(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsBulkUpdating(false);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
+
+    const { error } = await supabase
+      .from("client_requests")
+      .update({
+        archived_at: new Date().toISOString(),
+        archived_by: user.id,
+        archive_reason: "Archivado en lote",
+      })
+      .eq("company_id", companyId)
+      .in("id", selectedActiveRequestIds);
+
+    setIsBulkUpdating(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSelectedRequestIds(new Set());
+    setSuccessMessage("Solicitudes archivadas correctamente.");
+    await loadRequests(companyId, search, clientsById, archiveFilter);
+  }
+
+  async function bulkRestoreRequests() {
+    if (!companyId || selectedArchivedRequestIds.length === 0) {
+      return;
+    }
+
+    const shouldRestore = window.confirm(
+      "¿Restaurar los registros seleccionados?",
+    );
+
+    if (!shouldRestore) {
+      return;
+    }
+
+    setIsBulkUpdating(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const { error } = await supabase
+      .from("client_requests")
+      .update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+      })
+      .eq("company_id", companyId)
+      .in("id", selectedArchivedRequestIds);
+
+    setIsBulkUpdating(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    setSelectedRequestIds(new Set());
+    setSuccessMessage("Solicitudes restauradas correctamente.");
     await loadRequests(companyId, search, clientsById, archiveFilter);
   }
 
@@ -970,6 +1119,21 @@ export function SolicitudesClient() {
           </div>
         ) : null}
 
+        {successMessage ? (
+          <div className="border-b border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
+            {successMessage}
+          </div>
+        ) : null}
+
+        <BulkArchiveActionBar
+          archivedCount={selectedArchivedRequestIds.length}
+          disabled={isBulkUpdating}
+          filter={archiveFilter}
+          onArchive={bulkArchiveRequests}
+          onRestore={bulkRestoreRequests}
+          selectedCount={selectedRequests.length}
+        />
+
         {isLoading ? (
           <div className="p-5 text-sm font-medium text-stone-600">
             Cargando solicitudes...
@@ -983,6 +1147,15 @@ export function SolicitudesClient() {
             <table className="min-w-full divide-y divide-stone-200 text-left text-sm">
               <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
                 <tr>
+                  <th className="print:hidden px-5 py-3">
+                    <input
+                      aria-label="Seleccionar solicitudes visibles"
+                      checked={areAllVisibleRequestsSelected}
+                      className="h-4 w-4 rounded border-stone-300 text-emerald-800"
+                      onChange={toggleAllVisibleRequests}
+                      type="checkbox"
+                    />
+                  </th>
                   <th className="px-5 py-3">Folio</th>
                   <th className="px-5 py-3">Cliente</th>
                   <th className="px-5 py-3">Dependencia/contacto</th>
@@ -998,6 +1171,15 @@ export function SolicitudesClient() {
               <tbody className="divide-y divide-stone-200 bg-white">
                 {requests.map((request) => (
                   <tr key={request.id}>
+                    <td className="print:hidden px-5 py-4">
+                      <input
+                        aria-label={`Seleccionar solicitud ${request.folio || "sin folio"}`}
+                        checked={selectedRequestIds.has(request.id)}
+                        className="h-4 w-4 rounded border-stone-300 text-emerald-800"
+                        onChange={() => toggleRequestSelection(request.id)}
+                        type="checkbox"
+                      />
+                    </td>
                     <td className="px-5 py-4 font-medium text-stone-950">
                       <Link
                         className="text-emerald-800 hover:text-emerald-950 hover:underline"
