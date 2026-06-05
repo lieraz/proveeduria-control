@@ -112,6 +112,8 @@ const emptyQuickSupplierForm: QuickSupplierFormState = {
   notes: "",
 };
 
+const defaultTargetMargin = 0.4;
+
 function cleanOptionalValue(value: string) {
   const trimmedValue = value.trim();
   return trimmedValue.length > 0 ? trimmedValue : null;
@@ -124,14 +126,17 @@ function optionalNumber(value: string) {
 
 function targetMarginDecimal(value: string) {
   const cleanedValue = cleanOptionalValue(value);
-  const parsedValue = cleanedValue === null ? 0.4 : Number(cleanedValue);
+  const parsedValue =
+    cleanedValue === null ? defaultTargetMargin : Number(cleanedValue);
 
   if (!Number.isFinite(parsedValue)) {
     return null;
   }
 
   const decimalValue = parsedValue > 1 ? parsedValue / 100 : parsedValue;
-  return decimalValue >= 0 && decimalValue < 1 ? decimalValue : null;
+  return decimalValue >= 0 && decimalValue < 1
+    ? roundMargin(decimalValue)
+    : null;
 }
 
 function toNumber(value: number | string | null | undefined) {
@@ -161,12 +166,21 @@ function formatMoney(value: number | string | null | undefined) {
 
 function formatPercent(value: number | string | null | undefined) {
   const numericValue = toNumber(value);
-  const percentValue = Math.abs(numericValue) > 1 ? numericValue / 100 : numericValue;
+  const percentValue =
+    Math.abs(numericValue) > 1 ? numericValue / 100 : numericValue;
 
   return new Intl.NumberFormat("es-MX", {
     maximumFractionDigits: 2,
     style: "percent",
   }).format(percentValue);
+}
+
+function formatSummaryPercent(value: number) {
+  return new Intl.NumberFormat("es-MX", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+    style: "percent",
+  }).format(value);
 }
 
 function contactLabel(contact: ContactRecord | undefined) {
@@ -185,6 +199,35 @@ function brandModelText(
   model: string | null | undefined,
 ) {
   return [brand, model].filter(Boolean).join(" / ") || "Sin marca/modelo";
+}
+
+function roundMoney(value: number) {
+  return Math.round((value + Number.EPSILON) * 100) / 100;
+}
+
+function roundMargin(value: number) {
+  return Math.round((value + Number.EPSILON) * 10000) / 10000;
+}
+
+function numberInputValue(value: number) {
+  return String(value);
+}
+
+function calculateFinalUnitPrice(supplierCost: number, targetMargin: number) {
+  return roundMoney(supplierCost / (1 - targetMargin));
+}
+
+function calculateTargetMargin(supplierCost: number, finalUnitPrice: number) {
+  return roundMargin((finalUnitPrice - supplierCost) / finalUnitPrice);
+}
+
+function parseNumberInput(value: string) {
+  if (value.trim() === "") {
+    return null;
+  }
+
+  const numericValue = Number(value);
+  return Number.isFinite(numericValue) ? numericValue : null;
 }
 
 export function CotizacionDetalleClient({
@@ -251,6 +294,30 @@ export function CotizacionDetalleClient({
   );
   const selectedMargin =
     selectedSubtotal > 0 ? selectedProfit / selectedSubtotal : 0;
+  const quotationSummary = useMemo(() => {
+    const summary = lines.reduce(
+      (currentSummary, line) => {
+        const quantity = toNumber(line.quantity);
+        const lineCost = quantity * toNumber(line.supplier_cost);
+        const lineSale = quantity * toNumber(line.final_unit_price);
+
+        return {
+          costTotal: currentSummary.costTotal + lineCost,
+          saleTotal: currentSummary.saleTotal + lineSale,
+        };
+      },
+      { costTotal: 0, saleTotal: 0 },
+    );
+    const grossProfit = summary.saleTotal - summary.costTotal;
+    const realMargin =
+      summary.saleTotal > 0 ? grossProfit / summary.saleTotal : 0;
+
+    return {
+      ...summary,
+      grossProfit,
+      realMargin,
+    };
+  }, [lines]);
 
   const loadLines = useCallback(
     async (activeCompanyId: string) => {
@@ -423,6 +490,79 @@ export function CotizacionDetalleClient({
     }));
   }
 
+  function handleSupplierCostChange(value: string) {
+    const supplierCost = parseNumberInput(value);
+
+    setForm((currentForm) => {
+      const targetMargin = targetMarginDecimal(currentForm.target_margin);
+      const nextForm = {
+        ...currentForm,
+        supplier_cost: value,
+      };
+
+      if (
+        supplierCost !== null &&
+        supplierCost >= 0 &&
+        targetMargin !== null
+      ) {
+        nextForm.final_unit_price = numberInputValue(
+          calculateFinalUnitPrice(supplierCost, targetMargin),
+        );
+      }
+
+      return nextForm;
+    });
+  }
+
+  function handleTargetMarginChange(value: string) {
+    const targetMargin = targetMarginDecimal(value);
+
+    setForm((currentForm) => {
+      const supplierCost = parseNumberInput(currentForm.supplier_cost);
+      const nextForm = {
+        ...currentForm,
+        target_margin: value,
+      };
+
+      if (
+        supplierCost !== null &&
+        supplierCost >= 0 &&
+        targetMargin !== null
+      ) {
+        nextForm.final_unit_price = numberInputValue(
+          calculateFinalUnitPrice(supplierCost, targetMargin),
+        );
+      }
+
+      return nextForm;
+    });
+  }
+
+  function handleFinalUnitPriceChange(value: string) {
+    const finalUnitPrice = parseNumberInput(value);
+
+    setForm((currentForm) => {
+      const supplierCost = parseNumberInput(currentForm.supplier_cost);
+      const nextForm = {
+        ...currentForm,
+        final_unit_price: value,
+      };
+
+      if (
+        supplierCost !== null &&
+        supplierCost >= 0 &&
+        finalUnitPrice !== null &&
+        finalUnitPrice > 0
+      ) {
+        nextForm.target_margin = numberInputValue(
+          calculateTargetMargin(supplierCost, finalUnitPrice),
+        );
+      }
+
+      return nextForm;
+    });
+  }
+
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -443,6 +583,16 @@ export function CotizacionDetalleClient({
       return;
     }
 
+    const supplierCost = optionalNumber(form.supplier_cost);
+
+    if (
+      supplierCost !== null &&
+      (!Number.isFinite(supplierCost) || supplierCost < 0)
+    ) {
+      setErrorMessage("El costo proveedor no puede ser negativo.");
+      return;
+    }
+
     const targetMargin = targetMarginDecimal(form.target_margin);
 
     if (targetMargin === null) {
@@ -452,6 +602,29 @@ export function CotizacionDetalleClient({
       return;
     }
 
+    const finalUnitPrice = optionalNumber(form.final_unit_price);
+
+    if (
+      finalUnitPrice !== null &&
+      (!Number.isFinite(finalUnitPrice) || finalUnitPrice < 0)
+    ) {
+      setErrorMessage("El precio final unitario no puede ser negativo.");
+      return;
+    }
+
+    const syncedFinalUnitPrice =
+      finalUnitPrice !== null
+        ? roundMoney(finalUnitPrice)
+        : supplierCost !== null
+          ? calculateFinalUnitPrice(supplierCost, targetMargin)
+          : null;
+    const syncedTargetMargin =
+      syncedFinalUnitPrice !== null &&
+      syncedFinalUnitPrice > 0 &&
+      supplierCost !== null
+        ? calculateTargetMargin(supplierCost, syncedFinalUnitPrice)
+        : targetMargin;
+
     setIsSaving(true);
     setErrorMessage("");
 
@@ -459,14 +632,14 @@ export function CotizacionDetalleClient({
       brand: cleanOptionalValue(form.brand),
       custom_description: cleanOptionalValue(form.custom_description),
       model: cleanOptionalValue(form.model),
-      final_unit_price: optionalNumber(form.final_unit_price),
+      final_unit_price: syncedFinalUnitPrice,
       notes: cleanOptionalValue(form.notes),
       product_id: cleanOptionalValue(form.product_id),
       quantity,
       selected: form.selected,
-      supplier_cost: optionalNumber(form.supplier_cost),
+      supplier_cost: supplierCost === null ? null : roundMoney(supplierCost),
       supplier_id: cleanOptionalValue(form.supplier_id),
-      target_margin: targetMargin,
+      target_margin: syncedTargetMargin,
     };
 
     const { error } = editingLineId
@@ -496,6 +669,18 @@ export function CotizacionDetalleClient({
   }
 
   function startEditing(line: QuotationLineRecord) {
+    const supplierCost = parseNumberInput(String(line.supplier_cost ?? ""));
+    const targetMargin = targetMarginDecimal(String(line.target_margin ?? ""));
+    const savedFinalUnitPrice =
+      line.final_unit_price === null || line.final_unit_price === undefined
+        ? ""
+        : String(line.final_unit_price);
+    const finalUnitPrice =
+      savedFinalUnitPrice ||
+      (supplierCost !== null && targetMargin !== null
+        ? numberInputValue(calculateFinalUnitPrice(supplierCost, targetMargin))
+        : "");
+
     setEditingLineId(line.id);
     setShowCreateForm(false);
     cancelQuickSupplier();
@@ -503,10 +688,7 @@ export function CotizacionDetalleClient({
       brand: line.brand ?? "",
       custom_description: line.custom_description ?? "",
       model: line.model ?? "",
-      final_unit_price:
-        line.final_unit_price === null || line.final_unit_price === undefined
-          ? ""
-          : String(line.final_unit_price),
+      final_unit_price: finalUnitPrice,
       notes: line.notes ?? "",
       product_id: line.product_id ?? "",
       quantity: String(line.quantity ?? "1"),
@@ -666,10 +848,23 @@ export function CotizacionDetalleClient({
       return;
     }
 
+    const supplierCost = toNumber(line.supplier_cost);
+    const targetMargin = calculateTargetMargin(supplierCost, suggestedPrice);
+
+    if (supplierCost < 0 || targetMargin < 0 || targetMargin >= 1) {
+      setErrorMessage(
+        "El precio sugerido no permite calcular un margen objetivo válido.",
+      );
+      return;
+    }
+
     setErrorMessage("");
     const { error } = await supabase
       .from("quotation_lines")
-      .update({ final_unit_price: suggestedPrice })
+      .update({
+        final_unit_price: roundMoney(suggestedPrice),
+        target_margin: targetMargin,
+      })
       .eq("id", line.id)
       .eq("company_id", companyId);
 
@@ -760,6 +955,15 @@ export function CotizacionDetalleClient({
   const clientName = quotation?.client_id
     ? clientsById.get(quotation.client_id)?.name ?? "Cliente no disponible"
     : "Sin cliente";
+  const formSupplierCost = parseNumberInput(form.supplier_cost);
+  const formFinalUnitPrice = parseNumberInput(form.final_unit_price);
+  const formRealMargin =
+    formSupplierCost !== null &&
+    formFinalUnitPrice !== null &&
+    formSupplierCost >= 0 &&
+    formFinalUnitPrice > 0
+      ? calculateTargetMargin(formSupplierCost, formFinalUnitPrice)
+      : null;
   const selectedContact = quotation?.contact_ref_id
     ? contactsById.get(quotation.contact_ref_id)
     : undefined;
@@ -805,70 +1009,107 @@ export function CotizacionDetalleClient({
               Cargando cotización...
             </p>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                  Folio
-                </p>
-                <p className="mt-1 text-base font-semibold text-stone-950">
-                  {quotation.folio || "Sin folio"}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                  Cliente
-                </p>
-                <p className="mt-1 text-sm text-stone-800">{clientName}</p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                  Dependencia/contacto
-                </p>
-                <div className="mt-1 space-y-1 text-sm text-stone-800">
-                  <p>{contactName}</p>
-                  {selectedContact?.phone ? (
-                    <p className="text-xs text-stone-500">
-                      Tel. {selectedContact.phone}
-                    </p>
-                  ) : null}
-                  {selectedContact?.email ? (
-                    <p className="text-xs text-stone-500">
-                      {selectedContact.email}
-                    </p>
-                  ) : null}
+            <div className="space-y-5">
+              <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Folio
+                  </p>
+                  <p className="mt-1 text-base font-semibold text-stone-950">
+                    {quotation.folio || "Sin folio"}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Cliente
+                  </p>
+                  <p className="mt-1 text-sm text-stone-800">{clientName}</p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Dependencia/contacto
+                  </p>
+                  <div className="mt-1 space-y-1 text-sm text-stone-800">
+                    <p>{contactName}</p>
+                    {selectedContact?.phone ? (
+                      <p className="text-xs text-stone-500">
+                        Tel. {selectedContact.phone}
+                      </p>
+                    ) : null}
+                    {selectedContact?.email ? (
+                      <p className="text-xs text-stone-500">
+                        {selectedContact.email}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Fecha
+                  </p>
+                  <p className="mt-1 text-sm text-stone-800">
+                    {formatDate(quotation.quoted_at)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Vigencia
+                  </p>
+                  <p className="mt-1 text-sm text-stone-800">
+                    {formatDate(quotation.valid_until)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Estado
+                  </p>
+                  <p className="mt-1 text-sm text-stone-800">
+                    {quotation.status || "borrador"}
+                  </p>
+                </div>
+                <div className="md:col-span-2 lg:col-span-6">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Notas
+                  </p>
+                  <p className="mt-1 text-sm text-stone-800">
+                    {quotation.notes || "Sin notas"}
+                  </p>
                 </div>
               </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                  Fecha
-                </p>
-                <p className="mt-1 text-sm text-stone-800">
-                  {formatDate(quotation.quoted_at)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                  Vigencia
-                </p>
-                <p className="mt-1 text-sm text-stone-800">
-                  {formatDate(quotation.valid_until)}
-                </p>
-              </div>
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                  Estado
-                </p>
-                <p className="mt-1 text-sm text-stone-800">
-                  {quotation.status || "borrador"}
-                </p>
-              </div>
-              <div className="md:col-span-2 lg:col-span-6">
-                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                  Notas
-                </p>
-                <p className="mt-1 text-sm text-stone-800">
-                  {quotation.notes || "Sin notas"}
-                </p>
+
+              <div className="grid gap-3 border-t border-stone-200 pt-5 sm:grid-cols-2 lg:grid-cols-4">
+                <div className="rounded-md border border-stone-200 bg-stone-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Venta Total
+                  </p>
+                  <p className="mt-2 text-xl font-semibold text-stone-950">
+                    {formatMoney(quotationSummary.saleTotal)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-amber-200 bg-amber-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+                    Costo Total
+                  </p>
+                  <p className="mt-2 text-xl font-semibold text-amber-950">
+                    {formatMoney(quotationSummary.costTotal)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-emerald-200 bg-emerald-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+                    Utilidad Bruta
+                  </p>
+                  <p className="mt-2 text-xl font-semibold text-emerald-950">
+                    {formatMoney(quotationSummary.grossProfit)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-blue-200 bg-blue-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-blue-700">
+                    Margen Real
+                  </p>
+                  <p className="mt-2 text-xl font-semibold text-blue-950">
+                    {formatSummaryPercent(quotationSummary.realMargin)}
+                  </p>
+                </div>
               </div>
             </div>
           )}
@@ -1169,34 +1410,108 @@ export function CotizacionDetalleClient({
               ) : null}
             </div>
 
-            {[
-              ["supplier_cost", "Costo proveedor", form.supplier_cost],
-              ["target_margin", "Margen objetivo", form.target_margin],
-              ["final_unit_price", "Precio final unitario", form.final_unit_price],
-              ["quantity", "Cantidad", form.quantity],
-            ].map(([id, label, value]) => (
-              <div className="space-y-2" key={id}>
-                <label className="text-sm font-medium text-stone-800" htmlFor={id}>
-                  {label}
-                </label>
-                <input
-                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
-                  disabled={isLoading || isSaving || isSavingSupplier}
-                  id={id}
-                  min={id === "quantity" ? "0.01" : undefined}
-                  onChange={(event) =>
-                    setForm((currentForm) => ({
-                      ...currentForm,
-                      [id]: event.target.value,
-                    }))
-                  }
-                  required={id === "quantity"}
-                  step="0.01"
-                  type="number"
-                  value={value}
-                />
+            <div className="space-y-2">
+              <label
+                className="text-sm font-medium text-stone-800"
+                htmlFor="supplier_cost"
+              >
+                Costo proveedor
+              </label>
+              <input
+                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                disabled={isLoading || isSaving || isSavingSupplier}
+                id="supplier_cost"
+                min="0"
+                onChange={(event) => handleSupplierCostChange(event.target.value)}
+                step="0.01"
+                type="number"
+                value={form.supplier_cost}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label
+                className="text-sm font-medium text-stone-800"
+                htmlFor="target_margin"
+              >
+                Margen objetivo
+              </label>
+              <input
+                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                disabled={isLoading || isSaving || isSavingSupplier}
+                id="target_margin"
+                max="99.99"
+                min="0"
+                onChange={(event) => handleTargetMarginChange(event.target.value)}
+                step="0.0001"
+                type="number"
+                value={form.target_margin}
+              />
+              <p className="text-xs text-stone-500">
+                Ejemplo: 40% se guarda como margen 0.40
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label
+                className="text-sm font-medium text-stone-800"
+                htmlFor="final_unit_price"
+              >
+                Precio final unitario
+              </label>
+              <input
+                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                disabled={isLoading || isSaving || isSavingSupplier}
+                id="final_unit_price"
+                min="0"
+                onChange={(event) =>
+                  handleFinalUnitPriceChange(event.target.value)
+                }
+                step="0.01"
+                type="number"
+                value={form.final_unit_price}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label
+                className="text-sm font-medium text-stone-800"
+                htmlFor="real_margin"
+              >
+                Margen real
+              </label>
+              <div
+                className="flex h-11 items-center rounded-md border border-stone-200 bg-stone-50 px-3 text-sm font-medium text-stone-700"
+                id="real_margin"
+              >
+                {formRealMargin === null ? "Sin precio final" : formatPercent(formRealMargin)}
               </div>
-            ))}
+            </div>
+
+            <div className="space-y-2">
+              <label
+                className="text-sm font-medium text-stone-800"
+                htmlFor="quantity"
+              >
+                Cantidad
+              </label>
+              <input
+                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                disabled={isLoading || isSaving || isSavingSupplier}
+                id="quantity"
+                min="0.01"
+                onChange={(event) =>
+                  setForm((currentForm) => ({
+                    ...currentForm,
+                    quantity: event.target.value,
+                  }))
+                }
+                required
+                step="0.01"
+                type="number"
+                value={form.quantity}
+              />
+            </div>
 
             <label className="flex h-11 items-center gap-3 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800">
               <input
@@ -1393,14 +1708,16 @@ export function CotizacionDetalleClient({
                                 : "Agregar al catálogo"}
                             </button>
                           ) : null}
-                          <button
-                            className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
-                            disabled={isSaving || isDeletingId === line.id}
-                            onClick={() => applySuggestedPrice(line)}
-                            type="button"
-                          >
-                            Usar precio sugerido
-                          </button>
+                          {toNumber(line.suggested_price) > 0 ? (
+                            <button
+                              className="h-9 rounded-md border border-stone-200 px-3 text-sm font-medium text-stone-500 transition hover:border-stone-300 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                              disabled={isSaving || isDeletingId === line.id}
+                              onClick={() => applySuggestedPrice(line)}
+                              type="button"
+                            >
+                              Aplicar sugerido
+                            </button>
+                          ) : null}
                           <button
                             className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
                             disabled={isSaving || isDeletingId === line.id}

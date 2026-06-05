@@ -500,6 +500,13 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
       return;
     }
 
+    const supplierCost = optionalNumber(form.supplier_cost);
+
+    if (supplierCost !== null && supplierCost < 0) {
+      setErrorMessage("El costo proveedor no puede ser negativo.");
+      return;
+    }
+
     setIsSaving(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -513,7 +520,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
       product_id: cleanOptionalValue(form.product_id),
       product_description: cleanOptionalValue(form.custom_description),
       quantity,
-      supplier_cost: optionalNumber(form.supplier_cost),
+      supplier_cost: supplierCost,
       supplier_id: cleanOptionalValue(form.supplier_id),
       unit: cleanOptionalValue(form.unit) ?? "pieza",
     });
@@ -888,7 +895,13 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                 <input
                   className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100"
                   id={id}
-                  min={id === "quantity" ? "0.01" : undefined}
+                  min={
+                    id === "quantity"
+                      ? "0.01"
+                      : id === "supplier_cost"
+                        ? "0"
+                        : undefined
+                  }
                   onChange={(event) =>
                     setForm((currentForm) => ({
                       ...currentForm,
