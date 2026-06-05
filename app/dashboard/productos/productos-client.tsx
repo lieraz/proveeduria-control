@@ -8,7 +8,9 @@ import { createClient } from "@/src/lib/supabase/client";
 type ProductRecord = {
   id: string;
   name: string;
+  brand: string | null;
   category: string | null;
+  model: string | null;
   unit: string | null;
   description: string | null;
   image_url: string | null;
@@ -17,7 +19,9 @@ type ProductRecord = {
 
 type ProductFormState = {
   name: string;
+  brand: string;
   category: string;
+  model: string;
   unit: string;
   description: string;
   image_url: string;
@@ -25,7 +29,9 @@ type ProductFormState = {
 
 const emptyForm: ProductFormState = {
   name: "",
+  brand: "",
   category: "",
+  model: "",
   unit: "pieza",
   description: "",
   image_url: "",
@@ -55,7 +61,9 @@ function productMatchesSearch(product: ProductRecord, searchValue: string) {
 
   return [
     product.name,
+    product.brand,
     product.category,
+    product.model,
     product.unit,
     product.description,
   ].some((value) => value?.toLowerCase().includes(normalizedSearch));
@@ -110,7 +118,7 @@ export function ProductosClient() {
 
       const { data, error } = await supabase
         .from("products")
-        .select("id,name,category,unit,description,image_url,active")
+        .select("id,name,brand,category,model,unit,description,image_url,active")
         .eq("company_id", activeCompanyId)
         .order("name", { ascending: true });
 
@@ -203,7 +211,9 @@ export function ProductosClient() {
 
     const payload = {
       name,
+      brand: cleanOptionalValue(form.brand),
       category: cleanOptionalValue(form.category),
+      model: cleanOptionalValue(form.model),
       unit: form.unit,
       description: cleanOptionalValue(form.description),
       image_url: cleanOptionalValue(form.image_url),
@@ -237,7 +247,9 @@ export function ProductosClient() {
     setShowCreateForm(false);
     setForm({
       name: product.name,
+      brand: product.brand ?? "",
       category: product.category ?? "",
+      model: product.model ?? "",
       unit: unitOptions.includes(product.unit ?? "") ? product.unit ?? "pieza" : "otro",
       description: product.description ?? "",
       image_url: product.image_url ?? "",
@@ -393,6 +405,54 @@ export function ProductosClient() {
           </div>
 
           <div className="space-y-2">
+            <label
+              className="text-sm font-medium text-stone-800"
+              htmlFor="brand"
+            >
+              Marca
+            </label>
+            <input
+              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+              disabled={isLoading || isSaving}
+              id="brand"
+              name="brand"
+              onChange={(event) =>
+                setForm((currentForm) => ({
+                  ...currentForm,
+                  brand: event.target.value,
+                }))
+              }
+              placeholder="Ej. 3M, Truper, HP"
+              type="text"
+              value={form.brand}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label
+              className="text-sm font-medium text-stone-800"
+              htmlFor="model"
+            >
+              Modelo
+            </label>
+            <input
+              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+              disabled={isLoading || isSaving}
+              id="model"
+              name="model"
+              onChange={(event) =>
+                setForm((currentForm) => ({
+                  ...currentForm,
+                  model: event.target.value,
+                }))
+              }
+              placeholder="Modelo, serie o presentación"
+              type="text"
+              value={form.model}
+            />
+          </div>
+
+          <div className="space-y-2">
             <label className="text-sm font-medium text-stone-800" htmlFor="unit">
               Unidad
             </label>
@@ -498,7 +558,7 @@ export function ProductosClient() {
                 Productos registrados
               </h3>
               <p className="mt-1 text-sm text-stone-600">
-                Busca por nombre, categoría, unidad o descripción.
+                Busca por nombre, marca, modelo, categoría, unidad o descripción.
               </p>
             </div>
 
@@ -560,6 +620,7 @@ export function ProductosClient() {
               <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
                 <tr>
                   <th className="px-5 py-3">Producto</th>
+                  <th className="px-5 py-3">Marca/modelo</th>
                   <th className="px-5 py-3">Categoría</th>
                   <th className="px-5 py-3">Unidad</th>
                   <th className="px-5 py-3">Descripción</th>
@@ -577,6 +638,10 @@ export function ProductosClient() {
                           {product.name}
                         </p>
                       </div>
+                    </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      {[product.brand, product.model].filter(Boolean).join(" / ") ||
+                        "Sin marca/modelo"}
                     </td>
                     <td className="px-5 py-4 text-stone-700">
                       {product.category || "Sin categoría"}

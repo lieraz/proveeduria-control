@@ -23,7 +23,9 @@ type ContactRecord = {
 type ProductRecord = {
   id: string;
   name: string;
+  brand: string | null;
   description: string | null;
+  model: string | null;
   unit: string | null;
 };
 
@@ -46,7 +48,9 @@ type QuotationRecord = {
 type QuotationLineRecord = {
   id: string;
   product_id: string | null;
+  brand: string | null;
   custom_description: string | null;
+  model: string | null;
   supplier_id: string | null;
   supplier_cost: number | string | null;
   target_margin: number | string | null;
@@ -62,7 +66,9 @@ type QuotationLineRecord = {
 
 type LineFormState = {
   product_id: string;
+  brand: string;
   custom_description: string;
+  model: string;
   supplier_id: string;
   supplier_cost: string;
   target_margin: string;
@@ -78,7 +84,9 @@ type CotizacionDetalleClientProps = {
 
 const emptyLineForm: LineFormState = {
   product_id: "",
+  brand: "",
   custom_description: "",
+  model: "",
   supplier_id: "",
   supplier_cost: "",
   target_margin: "0.40",
@@ -154,6 +162,13 @@ function contactLabel(contact: ContactRecord | undefined) {
   const details = [contact.organization_area, contact.position].filter(Boolean);
 
   return details.length > 0 ? `${name} - ${details.join(" - ")}` : name;
+}
+
+function brandModelText(
+  brand: string | null | undefined,
+  model: string | null | undefined,
+) {
+  return [brand, model].filter(Boolean).join(" / ") || "Sin marca/modelo";
 }
 
 export function CotizacionDetalleClient({
@@ -316,7 +331,7 @@ export function CotizacionDetalleClient({
           .eq("active", true),
         supabase
           .from("products")
-          .select("id,name,description,unit")
+          .select("id,name,brand,description,model,unit")
           .eq("company_id", activeCompanyId)
           .order("name", { ascending: true }),
         supabase
@@ -363,8 +378,10 @@ export function CotizacionDetalleClient({
 
     setForm((currentForm) => ({
       ...currentForm,
+      brand: currentForm.brand || selectedProduct?.brand || "",
       custom_description:
         currentForm.custom_description || selectedProduct?.description || "",
+      model: currentForm.model || selectedProduct?.model || "",
       product_id: productId,
     }));
   }
@@ -402,7 +419,9 @@ export function CotizacionDetalleClient({
     setErrorMessage("");
 
     const payload = {
+      brand: cleanOptionalValue(form.brand),
       custom_description: cleanOptionalValue(form.custom_description),
+      model: cleanOptionalValue(form.model),
       final_unit_price: optionalNumber(form.final_unit_price),
       notes: cleanOptionalValue(form.notes),
       product_id: cleanOptionalValue(form.product_id),
@@ -442,7 +461,9 @@ export function CotizacionDetalleClient({
     setEditingLineId(line.id);
     setShowCreateForm(false);
     setForm({
+      brand: line.brand ?? "",
       custom_description: line.custom_description ?? "",
+      model: line.model ?? "",
       final_unit_price:
         line.final_unit_price === null || line.final_unit_price === undefined
           ? ""
@@ -583,7 +604,9 @@ export function CotizacionDetalleClient({
     setSuccessMessage("");
 
     const productResponse = await resolveCatalogProduct(supabase, {
+      brand: line.brand,
       companyId,
+      model: line.model,
       name: line.custom_description,
       unit: "pieza",
     });
@@ -615,7 +638,9 @@ export function CotizacionDetalleClient({
             ...currentProducts,
             {
               description: line.custom_description,
+              brand: line.brand,
               id: productResponse.product.id,
+              model: line.model,
               name: productResponse.product.name,
               unit: "pieza",
             },
@@ -825,6 +850,42 @@ export function CotizacionDetalleClient({
             </div>
 
             <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-800" htmlFor="brand">
+                Marca
+              </label>
+              <input
+                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                disabled={isLoading || isSaving}
+                id="brand"
+                onChange={(event) =>
+                  setForm((currentForm) => ({
+                    ...currentForm,
+                    brand: event.target.value,
+                  }))
+                }
+                value={form.brand}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-800" htmlFor="model">
+                Modelo
+              </label>
+              <input
+                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                disabled={isLoading || isSaving}
+                id="model"
+                onChange={(event) =>
+                  setForm((currentForm) => ({
+                    ...currentForm,
+                    model: event.target.value,
+                  }))
+                }
+                value={form.model}
+              />
+            </div>
+
+            <div className="space-y-2">
               <label
                 className="text-sm font-medium text-stone-800"
                 htmlFor="supplier_id"
@@ -981,6 +1042,7 @@ export function CotizacionDetalleClient({
                   <tr>
                     <th className="px-5 py-3">Elegida</th>
                     <th className="px-5 py-3">Descripción</th>
+                    <th className="px-5 py-3">Marca/modelo</th>
                     <th className="px-5 py-3">Proveedor</th>
                     <th className="px-5 py-3 text-right">Costo</th>
                     <th className="px-5 py-3 text-right">Margen objetivo</th>
@@ -1018,6 +1080,9 @@ export function CotizacionDetalleClient({
                             {line.product_id ? "En catálogo" : "Sin catalogar"}
                           </span>
                         </div>
+                      </td>
+                      <td className="px-5 py-4 text-stone-700">
+                        {brandModelText(line.brand, line.model)}
                       </td>
                       <td className="px-5 py-4 text-stone-700">
                         {line.supplier_id
@@ -1158,6 +1223,7 @@ export function CotizacionDetalleClient({
             <thead>
               <tr className="border-b border-stone-300 text-left">
                 <th className="py-3 pr-4">Descripción</th>
+                <th className="py-3 pr-4">Marca/modelo</th>
                 <th className="py-3 pr-4 text-right">Cantidad</th>
                 <th className="py-3 pr-4 text-right">Precio unitario</th>
                 <th className="py-3 text-right">Total</th>
@@ -1174,6 +1240,9 @@ export function CotizacionDetalleClient({
                       <p className="mt-1 text-xs text-stone-600">{line.notes}</p>
                     ) : null}
                   </td>
+                  <td className="py-3 pr-4 text-stone-700">
+                    {brandModelText(line.brand, line.model)}
+                  </td>
                   <td className="py-3 pr-4 text-right">
                     {toNumber(line.quantity)}
                   </td>
@@ -1188,7 +1257,7 @@ export function CotizacionDetalleClient({
             </tbody>
             <tfoot>
               <tr>
-                <td className="pt-5 text-right font-semibold" colSpan={3}>
+                <td className="pt-5 text-right font-semibold" colSpan={4}>
                   Total
                 </td>
                 <td className="pt-5 text-right text-lg font-semibold">

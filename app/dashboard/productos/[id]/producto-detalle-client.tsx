@@ -7,7 +7,9 @@ import { createClient } from "@/src/lib/supabase/client";
 type ProductRecord = {
   id: string;
   name: string;
+  brand: string | null;
   category: string | null;
+  model: string | null;
   unit: string | null;
   description: string | null;
   image_url: string | null;
@@ -18,6 +20,8 @@ type SupplierPriceRecord = {
   id: string;
   product_id: string | null;
   product_description: string | null;
+  brand: string | null;
+  model: string | null;
   supplier_id: string | null;
   cost: number | string | null;
   unit: string | null;
@@ -52,7 +56,9 @@ type SupplierPriceFormState = {
 
 type ProductFormState = {
   name: string;
+  brand: string;
   category: string;
+  model: string;
   unit: string;
   description: string;
   image_url: string;
@@ -65,9 +71,11 @@ type ProductoDetalleClientProps = {
 
 const emptyProductForm: ProductFormState = {
   active: true,
+  brand: "",
   category: "",
   description: "",
   image_url: "",
+  model: "",
   name: "",
   unit: "pieza",
 };
@@ -90,9 +98,11 @@ function supplierPriceFormDefault(unit?: string | null): SupplierPriceFormState 
 function productFormFromRecord(product: ProductRecord): ProductFormState {
   return {
     active: product.active,
+    brand: product.brand ?? "",
     category: product.category ?? "",
     description: product.description ?? "",
     image_url: product.image_url ?? "",
+    model: product.model ?? "",
     name: product.name,
     unit: product.unit ?? "pieza",
   };
@@ -164,7 +174,7 @@ export function ProductoDetalleClient({
       const { data, error } = await supabase
         .from("supplier_prices")
         .select(
-          "id,product_id,product_description,supplier_id,cost,unit,quoted_at,valid_until,active,notes,suppliers:supplier_id(id,name,phone,email)",
+          "id,product_id,product_description,brand,model,supplier_id,cost,unit,quoted_at,valid_until,active,notes,suppliers:supplier_id(id,name,phone,email)",
         )
         .eq("company_id", activeCompanyId)
         .eq("product_id", productId)
@@ -223,7 +233,7 @@ export function ProductoDetalleClient({
       const [productResponse, suppliersResponse] = await Promise.all([
         supabase
           .from("products")
-          .select("id,name,category,unit,description,image_url,active")
+          .select("id,name,brand,category,model,unit,description,image_url,active")
           .eq("company_id", profile.company_id)
           .eq("id", productId)
           .maybeSingle(),
@@ -301,9 +311,11 @@ export function ProductoDetalleClient({
 
     const payload = {
       active: productForm.active,
+      brand: cleanOptionalValue(productForm.brand),
       category: cleanOptionalValue(productForm.category),
       description: cleanOptionalValue(productForm.description),
       image_url: cleanOptionalValue(productForm.image_url),
+      model: cleanOptionalValue(productForm.model),
       name,
       unit,
     };
@@ -313,7 +325,7 @@ export function ProductoDetalleClient({
       .update(payload)
       .eq("id", productId)
       .eq("company_id", companyId)
-      .select("id,name,category,unit,description,image_url,active")
+      .select("id,name,brand,category,model,unit,description,image_url,active")
       .single();
 
     setIsProductSaving(false);
@@ -366,8 +378,10 @@ export function ProductoDetalleClient({
 
     const { error } = await supabase.from("supplier_prices").insert({
       active: true,
+      brand: cleanOptionalValue(productForm.brand),
       company_id: companyId,
       cost: parsedCost,
+      model: cleanOptionalValue(productForm.model),
       notes: cleanOptionalValue(form.notes),
       product_id: productId,
       quoted_at: form.quoted_at,
@@ -501,6 +515,48 @@ export function ProductoDetalleClient({
                   }
                   required
                   value={productForm.name}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  className="text-sm font-medium text-stone-800"
+                  htmlFor="product-brand"
+                >
+                  Marca
+                </label>
+                <input
+                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                  disabled={isProductSaving}
+                  id="product-brand"
+                  onChange={(event) =>
+                    setProductForm((currentForm) => ({
+                      ...currentForm,
+                      brand: event.target.value,
+                    }))
+                  }
+                  value={productForm.brand}
+                />
+              </div>
+
+              <div className="space-y-2">
+                <label
+                  className="text-sm font-medium text-stone-800"
+                  htmlFor="product-model"
+                >
+                  Modelo
+                </label>
+                <input
+                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                  disabled={isProductSaving}
+                  id="product-model"
+                  onChange={(event) =>
+                    setProductForm((currentForm) => ({
+                      ...currentForm,
+                      model: event.target.value,
+                    }))
+                  }
+                  value={productForm.model}
                 />
               </div>
 
@@ -831,9 +887,10 @@ export function ProductoDetalleClient({
           <div className="overflow-x-auto">
             <table className="min-w-full divide-y divide-stone-200 text-left text-sm">
               <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
-                <tr>
-                  <th className="px-5 py-3">Proveedor</th>
-                  <th className="px-5 py-3 text-right">Costo</th>
+	                <tr>
+	                  <th className="px-5 py-3">Proveedor</th>
+	                  <th className="px-5 py-3">Marca/modelo</th>
+	                  <th className="px-5 py-3 text-right">Costo</th>
                   <th className="px-5 py-3">Unidad</th>
                   <th className="px-5 py-3">Fecha cotizada</th>
                   <th className="px-5 py-3">Vigencia</th>
@@ -909,8 +966,13 @@ export function ProductoDetalleClient({
                           </div>
                         ) : null}
                       </div>
-                    </td>
-                    <td className="px-5 py-4 text-right text-stone-700">
+	                    </td>
+	                    <td className="px-5 py-4 text-stone-700">
+	                      {[price.brand, price.model].filter(Boolean).join(" / ") ||
+	                        [product?.brand, product?.model].filter(Boolean).join(" / ") ||
+	                        "Sin marca/modelo"}
+	                    </td>
+	                    <td className="px-5 py-4 text-right text-stone-700">
                       {formatMoney(price.cost)}
                     </td>
                     <td className="px-5 py-4 text-stone-700">

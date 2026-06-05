@@ -21,7 +21,9 @@ type ContactRecord = {
 type ProductRecord = {
   id: string;
   name: string;
+  brand: string | null;
   description: string | null;
+  model: string | null;
   unit: string | null;
 };
 
@@ -53,6 +55,8 @@ type InternalOrderLineRecord = {
   id: string;
   quotation_line_id: string | null;
   product_id: string | null;
+  brand: string | null;
+  model: string | null;
   product_description: string | null;
   supplier_id: string | null;
   supplier_cost: number | string | null;
@@ -75,6 +79,8 @@ type PurchaseRunLineRecord = {
   id: string;
   purchase_run_id: string | null;
   internal_order_line_id: string | null;
+  brand: string | null;
+  model: string | null;
   product_description: string | null;
   quantity: number | string | null;
   unit: string | null;
@@ -83,7 +89,9 @@ type PurchaseRunLineRecord = {
 
 type LineFormState = {
   product_id: string;
+  brand: string;
   custom_description: string;
+  model: string;
   supplier_id: string;
   supplier_cost: string;
   quantity: string;
@@ -97,7 +105,9 @@ type OrdenDetalleClientProps = {
 
 const emptyLineForm: LineFormState = {
   product_id: "",
+  brand: "",
   custom_description: "",
+  model: "",
   supplier_id: "",
   supplier_cost: "",
   quantity: "1",
@@ -164,6 +174,13 @@ function lineStatusClass(status: string | null) {
     default:
       return "border-amber-200 bg-amber-50 text-amber-800";
   }
+}
+
+function brandModelText(
+  brand: string | null | undefined,
+  model: string | null | undefined,
+) {
+  return [brand, model].filter(Boolean).join(" / ") || "Sin marca/modelo";
 }
 
 export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
@@ -284,7 +301,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
       const { data: linesData, error: linesError } = await supabase
         .from("purchase_run_lines")
         .select(
-          "id,purchase_run_id,internal_order_line_id,product_description,quantity,unit,status",
+          "id,purchase_run_id,internal_order_line_id,brand,model,product_description,quantity,unit,status",
         )
         .eq("company_id", activeCompanyId)
         .in("purchase_run_id", runIds);
@@ -368,7 +385,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
           .eq("active", true),
         supabase
           .from("products")
-          .select("id,name,description,unit")
+          .select("id,name,brand,description,model,unit")
           .eq("company_id", activeCompanyId)
           .order("name", { ascending: true }),
         supabase
@@ -442,8 +459,10 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
 
     setForm((currentForm) => ({
       ...currentForm,
+      brand: currentForm.brand || selectedProduct?.brand || "",
       custom_description:
         currentForm.custom_description || selectedProduct?.description || "",
+      model: currentForm.model || selectedProduct?.model || "",
       product_id: productId,
     }));
   }
@@ -486,8 +505,10 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     setSuccessMessage("");
 
     const { error } = await supabase.from("internal_order_lines").insert({
+      brand: cleanOptionalValue(form.brand),
       company_id: companyId,
       internal_order_id: orderId,
+      model: cleanOptionalValue(form.model),
       notes: cleanOptionalValue(form.notes),
       product_id: cleanOptionalValue(form.product_id),
       product_description: cleanOptionalValue(form.custom_description),
@@ -564,7 +585,9 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
           .insert(
             supplierLines.map((line) => ({
               company_id: companyId,
+              brand: line.brand,
               internal_order_line_id: line.id,
+              model: line.model,
               product_id: line.product_id,
               product_description: lineDescription(line),
               purchase_run_id: runData.id,
@@ -796,6 +819,40 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
             </div>
 
             <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-800" htmlFor="brand">
+                Marca
+              </label>
+              <input
+                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100"
+                id="brand"
+                onChange={(event) =>
+                  setForm((currentForm) => ({
+                    ...currentForm,
+                    brand: event.target.value,
+                  }))
+                }
+                value={form.brand}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-sm font-medium text-stone-800" htmlFor="model">
+                Modelo
+              </label>
+              <input
+                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100"
+                id="model"
+                onChange={(event) =>
+                  setForm((currentForm) => ({
+                    ...currentForm,
+                    model: event.target.value,
+                  }))
+                }
+                value={form.model}
+              />
+            </div>
+
+            <div className="space-y-2">
               <label className="text-sm font-medium text-stone-800" htmlFor="supplier_id">
                 Proveedor
               </label>
@@ -932,6 +989,9 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                       <span className="mt-1 block text-sm text-stone-600">
                         {supplierName} · Cantidad {toNumber(line.quantity)} · {formatMoney(line.line_total)}
                       </span>
+                      <span className="mt-1 block text-sm text-stone-600">
+                        {brandModelText(line.brand, line.model)}
+                      </span>
                     </span>
                     <span className="flex shrink-0 items-center gap-2">
                       {!line.supplier_id ? (
@@ -966,6 +1026,14 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                           Proveedor
                         </p>
                         <p className="mt-1 text-stone-800">{supplierName}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          Marca/modelo
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {brandModelText(line.brand, line.model)}
+                        </p>
                       </div>
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
@@ -1063,7 +1131,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                         <span className="font-medium text-stone-950">
                           {line.product_description || "Sin descripción"}
                         </span>{" "}
-                        · Cantidad {toNumber(line.quantity)} {line.unit || ""}
+                        · {brandModelText(line.brand, line.model)} · Cantidad {toNumber(line.quantity)} {line.unit || ""}
                       </div>
                     ))}
                   </div>

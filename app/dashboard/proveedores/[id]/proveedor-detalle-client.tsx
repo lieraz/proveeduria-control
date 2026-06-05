@@ -19,6 +19,8 @@ type SupplierPriceRecord = {
   id: string;
   product_id: string | null;
   product_description: string | null;
+  brand: string | null;
+  model: string | null;
   supplier_id: string | null;
   unit: string | null;
   cost: number | string | null;
@@ -36,8 +38,10 @@ type ProveedorDetalleClientProps = {
 
 type SupplierPriceProduct = {
   id: string;
+  brand: string | null;
   category: string | null;
   image_url: string | null;
+  model: string | null;
   name: string | null;
   unit: string | null;
 };
@@ -45,8 +49,10 @@ type SupplierPriceProduct = {
 type CatalogProductRecord = {
   id: string;
   active: boolean | null;
+  brand: string | null;
   category: string | null;
   description: string | null;
+  model: string | null;
   name: string | null;
   unit: string | null;
 };
@@ -142,7 +148,9 @@ function normalizeSearch(value: string | null | undefined) {
 }
 
 function getProductOptionLabel(product: CatalogProductRecord) {
-  const details = [product.category, product.unit].filter(Boolean).join(" - ");
+  const details = [product.brand, product.model, product.category, product.unit]
+    .filter(Boolean)
+    .join(" - ");
 
   return details
     ? `${product.name || "Sin nombre"} - ${details}`
@@ -155,8 +163,10 @@ function getMatchScore(product: CatalogProductRecord, priceDescription: string) 
   }
 
   const productName = normalizeSearch(product.name);
+  const productBrand = normalizeSearch(product.brand);
   const productCategory = normalizeSearch(product.category);
   const productDescription = normalizeSearch(product.description);
+  const productModel = normalizeSearch(product.model);
 
   if (productName === priceDescription) {
     return 3;
@@ -171,7 +181,9 @@ function getMatchScore(product: CatalogProductRecord, priceDescription: string) 
   }
 
   if (
+    productBrand.includes(priceDescription) ||
     productCategory.includes(priceDescription) ||
+    productModel.includes(priceDescription) ||
     productDescription.includes(priceDescription)
   ) {
     return 1;
@@ -203,7 +215,7 @@ export function ProveedorDetalleClient({
       const pricesResponse = await supabase
         .from("supplier_prices")
         .select(
-          "id,product_id,product_description,supplier_id,cost,unit,quoted_at,valid_until,active,notes,products:product_id(id,name,category,unit,image_url)",
+          "id,product_id,product_description,brand,model,supplier_id,cost,unit,quoted_at,valid_until,active,notes,products:product_id(id,name,brand,category,model,unit,image_url)",
         )
         .eq("company_id", activeCompanyId)
         .eq("supplier_id", supplierId)
@@ -267,7 +279,7 @@ export function ProveedorDetalleClient({
           .maybeSingle(),
         supabase
           .from("products")
-          .select("id,name,category,unit,description,active")
+          .select("id,name,brand,category,model,unit,description,active")
           .eq("company_id", profile.company_id)
           .eq("active", true)
           .order("name", { ascending: true }),
@@ -320,7 +332,7 @@ export function ProveedorDetalleClient({
           return true;
         }
 
-        return [product.name, product.category, product.description].some(
+        return [product.name, product.brand, product.model, product.category, product.description].some(
           (value) => normalizeSearch(value).includes(query),
         );
       })
@@ -359,6 +371,8 @@ export function ProveedorDetalleClient({
 
     const productResponse = await resolveCatalogProduct(supabase, {
       companyId,
+      brand: price.brand,
+      model: price.model,
       name: productName,
       unit: price.unit,
     });
@@ -372,7 +386,9 @@ export function ProveedorDetalleClient({
     const linkResponse = await linkSupplierPriceToProduct(supabase, {
       companyId,
       cost: price.cost,
+      brand: price.brand,
       id: price.id,
+      model: price.model,
       productId: productResponse.product.id,
       quotedAt: price.quoted_at,
       supplierId,
@@ -426,7 +442,9 @@ export function ProveedorDetalleClient({
     const linkResponse = await linkSupplierPriceToProduct(supabase, {
       companyId,
       cost: price.cost,
+      brand: price.brand,
       id: price.id,
+      model: price.model,
       productId: product.id,
       quotedAt: price.quoted_at,
       supplierId,
@@ -538,6 +556,7 @@ export function ProveedorDetalleClient({
               <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
                 <tr>
                   <th className="px-5 py-3">Artículo</th>
+                  <th className="px-5 py-3">Marca/modelo</th>
                   <th className="px-5 py-3">Estado</th>
                   <th className="px-5 py-3 text-right">Costo</th>
                   <th className="px-5 py-3">Fecha cotizada</th>
@@ -557,6 +576,13 @@ export function ProveedorDetalleClient({
                       <tr>
                         <td className="px-5 py-4 font-medium text-stone-950">
                           {getPriceDisplayName(price)}
+                        </td>
+                        <td className="px-5 py-4 text-stone-700">
+                          {[price.brand, price.model].filter(Boolean).join(" / ") ||
+                            [getPriceProduct(price)?.brand, getPriceProduct(price)?.model]
+                              .filter(Boolean)
+                              .join(" / ") ||
+                            "Sin marca/modelo"}
                         </td>
                         <td className="px-5 py-4">
                           <span
@@ -613,7 +639,7 @@ export function ProveedorDetalleClient({
                       </tr>
                       {isLinkingPrice ? (
                         <tr>
-                          <td className="bg-stone-50 px-5 py-4" colSpan={5}>
+                          <td className="bg-stone-50 px-5 py-4" colSpan={6}>
                             <form
                               className="grid gap-4 rounded-lg border border-stone-200 bg-white p-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,2fr)_auto]"
                               onSubmit={(event) => {

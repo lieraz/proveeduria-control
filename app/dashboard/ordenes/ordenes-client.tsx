@@ -22,7 +22,9 @@ type QuotationLineRecord = {
   id: string;
   quotation_id: string | null;
   product_id: string | null;
+  brand: string | null;
   custom_description: string | null;
+  model: string | null;
   supplier_id: string | null;
   supplier_cost: number | string | null;
   final_unit_price: number | string | null;
@@ -35,7 +37,9 @@ type QuotationLineRecord = {
 type ProductRecord = {
   id: string;
   name: string;
+  brand: string | null;
   description: string | null;
+  model: string | null;
   unit: string | null;
 };
 
@@ -302,7 +306,7 @@ export function OrdenesClient() {
           .order("name", { ascending: true }),
         supabase
           .from("products")
-          .select("id,name,description,unit")
+          .select("id,name,brand,description,model,unit")
           .eq("company_id", activeCompanyId)
           .order("name", { ascending: true }),
         supabase
@@ -350,7 +354,7 @@ export function OrdenesClient() {
     const { data, error } = await supabase
       .from("quotation_lines")
       .select(
-        "id,quotation_id,product_id,custom_description,supplier_id,supplier_cost,final_unit_price,quantity,line_total,selected,notes",
+        "id,quotation_id,product_id,brand,custom_description,model,supplier_id,supplier_cost,final_unit_price,quantity,line_total,selected,notes",
       )
       .eq("company_id", companyId)
       .eq("quotation_id", quotationId)
@@ -491,7 +495,9 @@ export function OrdenesClient() {
         .insert(
           linesToCopy.map((line) => ({
             company_id: companyId,
+            brand: line.brand,
             internal_order_id: orderData.id,
+            model: line.model,
             notes: line.notes,
             product_id: line.product_id,
             product_description:

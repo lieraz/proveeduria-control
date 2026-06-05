@@ -30,7 +30,9 @@ type ContactRecord = {
 type ProductRecord = {
   id: string;
   name: string;
+  brand: string | null;
   description: string | null;
+  model: string | null;
   unit: string | null;
 };
 
@@ -43,13 +45,15 @@ type SupplierPriceRecord = {
   id: string;
   product_id: string | null;
   product_description: string | null;
+  brand: string | null;
   item_description: string | null;
+  model: string | null;
   unit: string | null;
   cost: number | string | null;
   currency: string | null;
   quoted_at: string | null;
   valid_until: string | null;
-  products: { name: string | null }[] | null;
+  products: { brand: string | null; model: string | null; name: string | null }[] | null;
 };
 
 type RequestRecord = {
@@ -68,7 +72,9 @@ type RequestRecord = {
 
 type LineFormState = {
   product_id: string;
+  brand: string;
   description: string;
+  model: string;
   quantity: string;
   unit: string;
   priority: string;
@@ -78,6 +84,8 @@ type LineFormState = {
 
 type OfferFormState = {
   supplier_id: string;
+  brand: string;
+  model: string;
   supplier_description: string;
   unit_price: string;
   currency: string;
@@ -120,7 +128,9 @@ const lineStatusOptions = [
 
 const emptyLineForm: LineFormState = {
   product_id: "",
+  brand: "",
   description: "",
+  model: "",
   quantity: "1",
   unit: "pieza",
   priority: "normal",
@@ -130,6 +140,8 @@ const emptyLineForm: LineFormState = {
 
 const emptyOfferForm: OfferFormState = {
   supplier_id: "",
+  brand: "",
+  model: "",
   supplier_description: "",
   unit_price: "",
   currency: "MXN",
@@ -258,6 +270,13 @@ function supplierPriceDescription(price: SupplierPriceRecord) {
   );
 }
 
+function brandModelText(
+  brand: string | null | undefined,
+  model: string | null | undefined,
+) {
+  return [brand, model].filter(Boolean).join(" / ") || "Sin marca/modelo";
+}
+
 export function SolicitudDetalleClient({
   requestId,
 }: SolicitudDetalleClientProps) {
@@ -373,7 +392,7 @@ export function SolicitudDetalleClient({
       const { data, error } = await supabase
         .from("supplier_prices")
         .select(
-          "id,product_id,product_description,item_description,unit,cost,currency,quoted_at,valid_until,products(name)",
+          "id,product_id,product_description,brand,item_description,model,unit,cost,currency,quoted_at,valid_until,products(name,brand,model)",
         )
         .eq("company_id", activeCompanyId)
         .eq("supplier_id", supplierId)
@@ -404,7 +423,7 @@ export function SolicitudDetalleClient({
       const { data, error } = await supabase
         .from("supplier_offers")
         .select(
-          "id,company_id,client_request_line_id,supplier_id,supplier_description,unit_price,currency,lead_time_days,minimum_order_quantity,valid_until,notes,is_selected",
+          "id,company_id,client_request_line_id,supplier_id,brand,model,supplier_description,unit_price,currency,lead_time_days,minimum_order_quantity,valid_until,notes,is_selected",
         )
         .eq("company_id", activeCompanyId)
         .in("client_request_line_id", lineIds)
@@ -427,7 +446,7 @@ export function SolicitudDetalleClient({
       const { data, error } = await supabase
         .from("client_request_lines")
         .select(
-          "id,company_id,client_request_id,product_id,description,quantity,unit,priority,status,notes",
+          "id,company_id,client_request_id,product_id,brand,description,model,quantity,unit,priority,status,notes",
         )
         .eq("company_id", activeCompanyId)
         .eq("client_request_id", requestId)
@@ -523,7 +542,7 @@ export function SolicitudDetalleClient({
             .eq("active", true),
           supabase
             .from("products")
-            .select("id,name,description,unit")
+            .select("id,name,brand,description,model,unit")
             .eq("company_id", activeCompanyId)
             .eq("active", true)
             .order("name", { ascending: true }),
@@ -593,6 +612,10 @@ export function SolicitudDetalleClient({
   function supplierPriceOptionLabel(price: SupplierPriceRecord) {
     return [
       supplierPriceDescription(price),
+      brandModelText(
+        price.brand || price.products?.[0]?.brand,
+        price.model || price.products?.[0]?.model,
+      ),
       formatMoney(price.cost, price.currency || offerForm.currency),
       price.unit || "Sin unidad",
       formatDate(price.quoted_at),
@@ -614,6 +637,16 @@ export function SolicitudDetalleClient({
     const quotedAt = formatDate(selectedPrice.quoted_at);
     setOfferForm((currentForm) => ({
       ...currentForm,
+      brand:
+        currentForm.brand ||
+        selectedPrice.brand ||
+        selectedPrice.products?.[0]?.brand ||
+        "",
+      model:
+        currentForm.model ||
+        selectedPrice.model ||
+        selectedPrice.products?.[0]?.model ||
+        "",
       notes: `Basado en precio histórico del ${quotedAt}`,
       supplier_description: supplierPriceDescription(selectedPrice),
       unit_price:
@@ -629,9 +662,18 @@ export function SolicitudDetalleClient({
       return;
     }
 
+    const nextLineBrand =
+      line.brand || selectedPrice.brand || selectedPrice.products?.[0]?.brand || null;
+    const nextLineModel =
+      line.model || selectedPrice.model || selectedPrice.products?.[0]?.model || null;
+
     const { error } = await supabase
       .from("client_request_lines")
-      .update({ product_id: selectedPrice.product_id })
+      .update({
+        brand: nextLineBrand,
+        model: nextLineModel,
+        product_id: selectedPrice.product_id,
+      })
       .eq("id", line.id)
       .eq("company_id", companyId)
       .is("product_id", null);
@@ -644,7 +686,12 @@ export function SolicitudDetalleClient({
     setLines((currentLines) =>
       currentLines.map((currentLine) =>
         currentLine.id === line.id
-          ? { ...currentLine, product_id: selectedPrice.product_id }
+          ? {
+              ...currentLine,
+              brand: nextLineBrand,
+              model: nextLineModel,
+              product_id: selectedPrice.product_id,
+            }
           : currentLine,
       ),
     );
@@ -669,8 +716,10 @@ export function SolicitudDetalleClient({
 
     setForm((currentForm) => ({
       ...currentForm,
+      brand: currentForm.brand || selectedProduct?.brand || "",
       description:
         currentForm.description || selectedProduct?.description || selectedProduct?.name || "",
+      model: currentForm.model || selectedProduct?.model || "",
       product_id: productId,
       unit:
         currentForm.unit === "pieza" && selectedProduct?.unit
@@ -705,9 +754,11 @@ export function SolicitudDetalleClient({
     setErrorMessage("");
 
     const payload: ClientRequestLineInsert = {
+      brand: cleanOptionalValue(form.brand),
       company_id: companyId,
       client_request_id: requestId,
       description,
+      model: cleanOptionalValue(form.model),
       notes: cleanOptionalValue(form.notes),
       priority: form.priority,
       product_id: cleanOptionalValue(form.product_id),
@@ -720,7 +771,9 @@ export function SolicitudDetalleClient({
       ? await supabase
           .from("client_request_lines")
           .update({
+            brand: payload.brand,
             description: payload.description,
+            model: payload.model,
             notes: payload.notes,
             priority: payload.priority,
             product_id: payload.product_id,
@@ -751,7 +804,9 @@ export function SolicitudDetalleClient({
     setShowCreateForm(false);
     cancelOfferEditing();
     setForm({
+      brand: line.brand ?? "",
       description: line.description ?? "",
+      model: line.model ?? "",
       notes: line.notes ?? "",
       priority: priorityOptions.includes(line.priority ?? "")
         ? line.priority ?? "normal"
@@ -846,6 +901,8 @@ export function SolicitudDetalleClient({
     setIsLoadingSupplierPrices(false);
     setOfferForm({
       ...emptyOfferForm,
+      brand: line.brand ?? "",
+      model: line.model ?? "",
       supplier_description: lineDescription(line),
     });
     setErrorMessage("");
@@ -864,6 +921,7 @@ export function SolicitudDetalleClient({
     setSelectedSupplierPriceId("");
     setSupplierPrices([]);
     setOfferForm({
+      brand: offer.brand ?? "",
       currency: offer.currency || "MXN",
       lead_time_days:
         offer.lead_time_days === null || offer.lead_time_days === undefined
@@ -874,6 +932,7 @@ export function SolicitudDetalleClient({
         offer.minimum_order_quantity === undefined
           ? ""
           : String(offer.minimum_order_quantity),
+      model: offer.model ?? "",
       notes: offer.notes ?? "",
       supplier_description: offer.supplier_description ?? "",
       supplier_id: supplierId,
@@ -1000,12 +1059,14 @@ export function SolicitudDetalleClient({
     setErrorMessage("");
 
     const payload: SupplierOfferInsert = {
+      brand: cleanOptionalValue(offerForm.brand),
       client_request_line_id: line.id,
       company_id: companyId,
       currency: cleanOptionalValue(offerForm.currency)?.toUpperCase() ?? "MXN",
       is_selected: false,
       lead_time_days: optionalNumber(offerForm.lead_time_days),
       minimum_order_quantity: optionalNumber(offerForm.minimum_order_quantity),
+      model: cleanOptionalValue(offerForm.model),
       notes: cleanOptionalValue(offerForm.notes),
       supplier_description: cleanOptionalValue(offerForm.supplier_description),
       supplier_id: supplierId,
@@ -1017,9 +1078,11 @@ export function SolicitudDetalleClient({
       ? await supabase
           .from("supplier_offers")
           .update({
+            brand: payload.brand,
             currency: payload.currency,
             lead_time_days: payload.lead_time_days,
             minimum_order_quantity: payload.minimum_order_quantity,
+            model: payload.model,
             notes: payload.notes,
             supplier_description: payload.supplier_description,
             supplier_id: payload.supplier_id,
@@ -1029,14 +1092,14 @@ export function SolicitudDetalleClient({
           .eq("id", editingOfferId)
           .eq("company_id", companyId)
           .select(
-            "id,company_id,client_request_line_id,supplier_id,supplier_description,unit_price,currency,lead_time_days,minimum_order_quantity,valid_until,notes,is_selected",
+            "id,company_id,client_request_line_id,supplier_id,brand,model,supplier_description,unit_price,currency,lead_time_days,minimum_order_quantity,valid_until,notes,is_selected",
           )
           .single()
       : await supabase
           .from("supplier_offers")
           .insert(payload)
           .select(
-            "id,company_id,client_request_line_id,supplier_id,supplier_description,unit_price,currency,lead_time_days,minimum_order_quantity,valid_until,notes,is_selected",
+            "id,company_id,client_request_line_id,supplier_id,brand,model,supplier_description,unit_price,currency,lead_time_days,minimum_order_quantity,valid_until,notes,is_selected",
           )
           .single();
 
@@ -1221,9 +1284,11 @@ export function SolicitudDetalleClient({
         .join(" ");
 
       return {
+        brand: selectedOffer.brand || line.brand,
         company_id: companyId,
         custom_description: line.description,
         final_unit_price: finalUnitPrice,
+        model: selectedOffer.model || line.model,
         notes,
         product_id: line.product_id,
         quantity,
@@ -1270,9 +1335,11 @@ export function SolicitudDetalleClient({
 
       const { error: linesError } = await supabase.from("quotation_lines").insert(
         quotationLines.map((line) => ({
+          brand: line.brand,
           company_id: line.company_id,
           custom_description: line.custom_description,
           final_unit_price: line.final_unit_price,
+          model: line.model,
           notes: line.notes,
           product_id: line.product_id,
           quantity: line.quantity,
@@ -1521,6 +1588,42 @@ export function SolicitudDetalleClient({
           </div>
 
           <div className="space-y-2">
+            <label className="text-sm font-medium text-stone-800" htmlFor="brand">
+              Marca
+            </label>
+            <input
+              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+              disabled={isLoading || isSaving}
+              id="brand"
+              onChange={(event) =>
+                setForm((currentForm) => ({
+                  ...currentForm,
+                  brand: event.target.value,
+                }))
+              }
+              value={form.brand}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label className="text-sm font-medium text-stone-800" htmlFor="model">
+              Modelo
+            </label>
+            <input
+              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+              disabled={isLoading || isSaving}
+              id="model"
+              onChange={(event) =>
+                setForm((currentForm) => ({
+                  ...currentForm,
+                  model: event.target.value,
+                }))
+              }
+              value={form.model}
+            />
+          </div>
+
+          <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
               htmlFor="quantity"
@@ -1745,6 +1848,9 @@ export function SolicitudDetalleClient({
                           <p className="font-semibold text-stone-950">
                             {lineDescription(line)}
                           </p>
+                          <p className="text-sm text-stone-600">
+                            {brandModelText(line.brand, line.model)}
+                          </p>
                           <div className="flex flex-wrap gap-2 text-xs text-stone-600">
                             <span className="rounded-full bg-stone-100 px-2.5 py-1 font-semibold text-stone-700">
                               {formatQuantity(line.quantity)} {line.unit || ""}
@@ -1826,6 +1932,14 @@ export function SolicitudDetalleClient({
                               ? productsById.get(line.product_id)?.name ??
                                 "Producto no encontrado"
                               : "Sin producto"}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                            Marca/modelo
+                          </p>
+                          <p className="mt-1 text-stone-800">
+                            {brandModelText(line.brand, line.model)}
                           </p>
                         </div>
                         <div>
@@ -1947,6 +2061,9 @@ export function SolicitudDetalleClient({
                                   <p className="text-sm text-stone-700">
                                     {offer.supplier_description ||
                                       lineDescription(line)}
+                                  </p>
+                                  <p className="text-xs text-stone-500">
+                                    {brandModelText(offer.brand, offer.model)}
                                   </p>
                                   <div className="flex flex-wrap gap-x-5 gap-y-1 text-xs text-stone-600">
                                     <span>
@@ -2293,9 +2410,51 @@ export function SolicitudDetalleClient({
                                     }
                                     value={offerForm.supplier_description}
                                   />
-                                </div>
+	                                </div>
 
-                                {[
+	                                <div className="space-y-2">
+	                                  <label
+	                                    className="text-sm font-medium text-stone-800"
+	                                    htmlFor={`offer_brand_${line.id}`}
+	                                  >
+	                                    Marca
+	                                  </label>
+	                                  <input
+	                                    className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+	                                    disabled={isSavingOffer}
+	                                    id={`offer_brand_${line.id}`}
+	                                    onChange={(event) =>
+	                                      setOfferForm((currentForm) => ({
+	                                        ...currentForm,
+	                                        brand: event.target.value,
+	                                      }))
+	                                    }
+	                                    value={offerForm.brand}
+	                                  />
+	                                </div>
+
+	                                <div className="space-y-2">
+	                                  <label
+	                                    className="text-sm font-medium text-stone-800"
+	                                    htmlFor={`offer_model_${line.id}`}
+	                                  >
+	                                    Modelo
+	                                  </label>
+	                                  <input
+	                                    className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+	                                    disabled={isSavingOffer}
+	                                    id={`offer_model_${line.id}`}
+	                                    onChange={(event) =>
+	                                      setOfferForm((currentForm) => ({
+	                                        ...currentForm,
+	                                        model: event.target.value,
+	                                      }))
+	                                    }
+	                                    value={offerForm.model}
+	                                  />
+	                                </div>
+
+	                                {[
                                   [
                                     "unit_price",
                                     "Precio unitario",

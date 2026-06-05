@@ -10,6 +10,8 @@ import { createClient } from "@/src/lib/supabase/client";
 type SupplierPriceRecord = {
   id: string;
   product_description: string | null;
+  brand: string | null;
+  model: string | null;
   supplier_id: string | null;
   cost: number | string | null;
   unit: string | null;
@@ -46,6 +48,8 @@ function priceMatchesSearch(price: SupplierPriceRecord, searchValue: string) {
 
   return [price.product_description, price.suppliers?.[0]?.name].some((value) =>
     value?.toLowerCase().includes(normalizedSearch),
+  ) || [price.brand, price.model].some((value) =>
+    value?.toLowerCase().includes(normalizedSearch),
   );
 }
 
@@ -81,7 +85,7 @@ export function ProductosSinCatalogarClient() {
       const { data, error } = await supabase
         .from("supplier_prices")
         .select(
-          "id,product_description,supplier_id,cost,unit,quoted_at,notes,suppliers(name)",
+          "id,product_description,brand,model,supplier_id,cost,unit,quoted_at,notes,suppliers(name)",
         )
         .eq("company_id", activeCompanyId)
         .is("product_id", null)
@@ -161,6 +165,8 @@ export function ProductosSinCatalogarClient() {
 
     const productResponse = await resolveCatalogProduct(supabase, {
       companyId,
+      brand: price.brand,
+      model: price.model,
       name: price.product_description,
       unit: price.unit,
     });
@@ -174,7 +180,9 @@ export function ProductosSinCatalogarClient() {
     const linkResponse = await linkSupplierPriceToProduct(supabase, {
       companyId,
       cost: price.cost,
+      brand: price.brand,
       id: price.id,
+      model: price.model,
       productId: productResponse.product.id,
       quotedAt: price.quoted_at,
       supplierId: price.supplier_id,
@@ -274,6 +282,7 @@ export function ProductosSinCatalogarClient() {
               <thead className="bg-stone-50 text-xs font-semibold uppercase tracking-wide text-stone-600">
                 <tr>
                   <th className="px-5 py-3">Artículo</th>
+                  <th className="px-5 py-3">Marca/modelo</th>
                   <th className="px-5 py-3">Estado</th>
                   <th className="px-5 py-3">Proveedor</th>
                   <th className="px-5 py-3 text-right">Costo</th>
@@ -288,6 +297,10 @@ export function ProductosSinCatalogarClient() {
                   <tr key={price.id}>
                     <td className="min-w-64 px-5 py-4 font-medium text-stone-950">
                       {price.product_description || "Artículo sin descripción"}
+                    </td>
+                    <td className="px-5 py-4 text-stone-700">
+                      {[price.brand, price.model].filter(Boolean).join(" / ") ||
+                        "Sin marca/modelo"}
                     </td>
                     <td className="px-5 py-4">
                       <span className="inline-flex rounded-full border border-amber-200 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-800">

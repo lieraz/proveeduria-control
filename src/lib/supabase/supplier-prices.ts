@@ -3,9 +3,11 @@ import type { createClient } from "@/src/lib/supabase/client";
 type SupabaseBrowserClient = ReturnType<typeof createClient>;
 
 type SupplierPriceLinkInput = {
+  brand?: string | null;
   companyId: string;
   cost: number | string | null;
   id: string;
+  model?: string | null;
   productId: string;
   quotedAt: string | null;
   supplierId: string | null;
@@ -76,6 +78,47 @@ export async function linkSupplierPriceToProduct(
     }
 
     return { duplicated: true, error: null };
+  }
+
+  const productResponse = await supabase
+    .from("products")
+    .select("brand,model")
+    .eq("id", input.productId)
+    .eq("company_id", input.companyId)
+    .maybeSingle();
+
+  if (productResponse.error) {
+    return {
+      duplicated: false,
+      error: new Error("No se pudo revisar la marca y modelo del producto."),
+    };
+  }
+
+  const productPatch: { brand?: string; model?: string } = {};
+  const brand = input.brand?.trim();
+  const model = input.model?.trim();
+
+  if (!productResponse.data?.brand && brand) {
+    productPatch.brand = brand;
+  }
+
+  if (!productResponse.data?.model && model) {
+    productPatch.model = model;
+  }
+
+  if (Object.keys(productPatch).length > 0) {
+    const { error: productUpdateError } = await supabase
+      .from("products")
+      .update(productPatch)
+      .eq("id", input.productId)
+      .eq("company_id", input.companyId);
+
+    if (productUpdateError) {
+      return {
+        duplicated: false,
+        error: new Error("No se pudo completar la marca y modelo del producto."),
+      };
+    }
   }
 
   const { error: updateError } = await supabase
