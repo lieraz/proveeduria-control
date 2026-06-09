@@ -9,6 +9,7 @@ import {
   Boxes,
   Building2,
   ClipboardList,
+  CreditCard,
   FileText,
   LayoutDashboard,
   LogOut,
@@ -35,6 +36,11 @@ const navigationGroups = [
       { label: "Proveedores", href: "/dashboard/proveedores", icon: Building2 },
       { label: "Contactos", href: "/dashboard/contactos", icon: UserRound },
       { label: "Productos", href: "/dashboard/productos", icon: Package },
+      {
+        label: "Métodos de pago",
+        href: "/dashboard/metodos-pago",
+        icon: CreditCard,
+      },
     ],
   },
   {
