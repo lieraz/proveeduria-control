@@ -15,6 +15,7 @@ import {
   LogOut,
   Package,
   ReceiptText,
+  ShoppingBag,
   Truck,
   UserRound,
   UsersRound,
@@ -48,6 +49,11 @@ const navigationGroups = [
     items: [
       { label: "Cotizaciones", href: "/dashboard/cotizaciones", icon: FileText },
       { label: "Órdenes", href: "/dashboard/ordenes", icon: Boxes },
+      {
+        label: "Compras / Recolecciones",
+        href: "/dashboard/compras",
+        icon: ShoppingBag,
+      },
       { label: "Entregas", href: "/dashboard/entregas", icon: Truck },
       { label: "Facturación", href: "/dashboard/facturacion", icon: ReceiptText },
     ],

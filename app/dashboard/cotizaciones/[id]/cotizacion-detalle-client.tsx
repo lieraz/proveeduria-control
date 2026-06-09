@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { INTERNAL_ORDER_LINE_STATUSES } from "@/app/dashboard/statuses";
 import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
 import { createClient } from "@/src/lib/supabase/client";
 
@@ -49,7 +50,6 @@ type QuotationRecord = {
 type QuotationLineRecord = {
   id: string;
   company_id: string | null;
-  client_request_line_id: string | null;
   product_id: string | null;
   brand: string | null;
   custom_description: string | null;
@@ -159,6 +159,14 @@ function toNumber(value: number | string | null | undefined) {
 
   const parsedValue = Number(value);
   return Number.isFinite(parsedValue) ? parsedValue : 0;
+}
+
+function orderSaleUnitPrice(line: QuotationLineRecord) {
+  const saleUnitPrice = Number(
+    line.final_unit_price ?? line.suggested_price ?? 0,
+  );
+
+  return Number.isFinite(saleUnitPrice) ? saleUnitPrice : 0;
 }
 
 function formatDate(value: string | null) {
@@ -353,7 +361,9 @@ export function CotizacionDetalleClient({
     async (activeCompanyId: string) => {
       const { data, error } = await supabase
         .from("quotation_lines")
-        .select("*")
+        .select(
+          "id,company_id,quotation_id,product_id,brand,custom_description,model,supplier_id,supplier_cost,target_margin,suggested_price,final_unit_price,quantity,line_total,line_profit,real_margin,selected,notes",
+        )
         .eq("company_id", activeCompanyId)
         .eq("quotation_id", quotationId)
         .order("created_at", { ascending: true });
@@ -1147,6 +1157,20 @@ export function CotizacionDetalleClient({
       return;
     }
 
+    const linesWithoutFinalPrice = linesToCopy.filter(
+      (line) => toNumber(line.final_unit_price) <= 0,
+    );
+
+    if (
+      linesWithoutFinalPrice.length > 0 &&
+      !window.confirm(
+        "Hay partidas sin precio final. La orden puede quedar con venta en cero.",
+      )
+    ) {
+      setIsCreatingOrder(false);
+      return;
+    }
+
     const {
       data: { user },
       error: userError,
@@ -1187,7 +1211,6 @@ export function CotizacionDetalleClient({
 
           return {
             brand: line.brand,
-            client_request_line_id: line.client_request_line_id,
             company_id: line.company_id ?? companyId,
             internal_order_id: orderData.id,
             model: line.model,
@@ -1196,8 +1219,8 @@ export function CotizacionDetalleClient({
             product_id: line.product_id,
             quantity: toNumber(line.quantity) || 1,
             quotation_line_id: line.id,
-            sale_unit_price: line.final_unit_price,
-            status: "por comprar",
+            sale_unit_price: orderSaleUnitPrice(line),
+            status: INTERNAL_ORDER_LINE_STATUSES[1],
             supplier_cost: line.supplier_cost,
             supplier_id: line.supplier_id,
             unit: product?.unit || "pieza",

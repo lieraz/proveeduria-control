@@ -10,6 +10,7 @@ import {
   ArchiveFilterToggle,
   BulkArchiveActionBar,
 } from "@/app/dashboard/archive-controls";
+import { INTERNAL_ORDER_LINE_STATUSES } from "@/app/dashboard/statuses";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -33,6 +34,7 @@ type QuotationLineRecord = {
   model: string | null;
   supplier_id: string | null;
   supplier_cost: number | string | null;
+  suggested_price: number | string | null;
   final_unit_price: number | string | null;
   quantity: number | string | null;
   line_total: number | string | null;
@@ -103,6 +105,14 @@ function toNumber(value: number | string | null | undefined) {
 
   const parsedValue = Number(value);
   return Number.isFinite(parsedValue) ? parsedValue : 0;
+}
+
+function orderSaleUnitPrice(line: QuotationLineRecord) {
+  const saleUnitPrice = Number(
+    line.final_unit_price ?? line.suggested_price ?? 0,
+  );
+
+  return Number.isFinite(saleUnitPrice) ? saleUnitPrice : 0;
 }
 
 function formatDate(value: string | null) {
@@ -421,7 +431,7 @@ export function OrdenesClient() {
     const { data, error } = await supabase
       .from("quotation_lines")
       .select(
-        "id,quotation_id,product_id,brand,custom_description,model,supplier_id,supplier_cost,final_unit_price,quantity,line_total,selected,notes",
+        "id,quotation_id,product_id,custom_description,supplier_id,brand,model,notes,supplier_cost,suggested_price,final_unit_price,quantity,line_total,selected",
       )
       .eq("company_id", companyId)
       .eq("quotation_id", quotationId)
@@ -619,8 +629,9 @@ export function OrdenesClient() {
       return;
     }
 
+    const archivedCount = selectedActiveOrderIds.length;
     setSelectedOrderIds(new Set());
-    setSuccessMessage("Órdenes archivadas correctamente.");
+    setSuccessMessage(`Se archivaron ${archivedCount} órdenes.`);
     await loadOrders(companyId, search, quotationsById, clientsById, archiveFilter);
   }
 
@@ -741,6 +752,19 @@ export function OrdenesClient() {
       return;
     }
 
+    const linesWithoutFinalPrice = linesToCopy.filter(
+      (line) => toNumber(line.final_unit_price) <= 0,
+    );
+
+    if (
+      linesWithoutFinalPrice.length > 0 &&
+      !window.confirm(
+        "Hay partidas sin precio final. La orden puede quedar con venta en cero.",
+      )
+    ) {
+      return;
+    }
+
     setIsSaving(true);
     setErrorMessage("");
     setSuccessMessage("");
@@ -850,8 +874,8 @@ export function OrdenesClient() {
               "Sin descripción",
             quantity: toNumber(line.quantity) || 1,
             quotation_line_id: line.id,
-            sale_unit_price: line.final_unit_price,
-            status: "por comprar",
+            sale_unit_price: orderSaleUnitPrice(line),
+            status: INTERNAL_ORDER_LINE_STATUSES[1],
             supplier_cost: line.supplier_cost,
             supplier_id: line.supplier_id,
             unit:
@@ -1149,7 +1173,7 @@ export function OrdenesClient() {
                           className="text-emerald-800 hover:text-emerald-950 hover:underline"
                           href={`/dashboard/ordenes/${order.id}`}
                         >
-                          {order.folio || "Sin folio"}
+                          Orden #{order.folio || "sin folio"}
                         </Link>
                       </td>
                       <td className="px-5 py-4 text-stone-700">

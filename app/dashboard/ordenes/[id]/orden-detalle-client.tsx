@@ -8,6 +8,9 @@ import {
   ArchiveFilterToggle,
   BulkArchiveActionBar,
 } from "@/app/dashboard/archive-controls";
+import {
+  INTERNAL_ORDER_LINE_STATUSES,
+} from "@/app/dashboard/statuses";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -151,6 +154,18 @@ function toNumber(value: number | string | null | undefined) {
   return Number.isFinite(parsedValue) ? parsedValue : 0;
 }
 
+function numberWithDefault(
+  value: number | string | null | undefined,
+  fallback: number,
+) {
+  if (value === null || value === undefined || value === "") {
+    return fallback;
+  }
+
+  const parsedValue = Number(value);
+  return Number.isFinite(parsedValue) ? parsedValue : fallback;
+}
+
 function formatDate(value: string | null) {
   if (!value) {
     return "Sin fecha";
@@ -188,11 +203,15 @@ function contactLabel(contact: ContactRecord | undefined) {
 function lineStatusClass(status: string | null) {
   switch (status) {
     case "por comprar":
+    case "pendiente":
       return "border-amber-200 bg-amber-50 text-amber-800";
-    case "en_compra":
+    case "comprado":
+    case "recibido":
       return "border-sky-200 bg-sky-50 text-sky-800";
-    case "completada":
+    case "entregado":
       return "border-emerald-200 bg-emerald-50 text-emerald-800";
+    case "cancelado":
+      return "border-red-200 bg-red-50 text-red-700";
     default:
       return "border-amber-200 bg-amber-50 text-amber-800";
   }
@@ -226,6 +245,9 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     PurchaseRunLineRecord[]
   >([]);
   const [purchaseRuns, setPurchaseRuns] = useState<PurchaseRunRecord[]>([]);
+  const [generatedPurchaseRunIds, setGeneratedPurchaseRunIds] = useState<
+    string[]
+  >([]);
   const [quotations, setQuotations] = useState<QuotationRecord[]>([]);
   const [selectedPurchaseRunIds, setSelectedPurchaseRunIds] = useState<
     Set<string>
@@ -249,6 +271,10 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   const productsById = useMemo(
     () => new Map(products.map((product) => [product.id, product])),
     [products],
+  );
+  const purchaseRunsById = useMemo(
+    () => new Map(purchaseRuns.map((run) => [run.id, run])),
+    [purchaseRuns],
   );
   const quotationsById = useMemo(
     () => new Map(quotations.map((quotation) => [quotation.id, quotation])),
@@ -593,6 +619,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     setIsSaving(true);
     setErrorMessage("");
     setSuccessMessage("");
+    setGeneratedPurchaseRunIds([]);
 
     const { error } = await supabase.from("internal_order_lines").insert({
       brand: cleanOptionalValue(form.brand),
@@ -603,6 +630,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
       product_id: cleanOptionalValue(form.product_id),
       product_description: cleanOptionalValue(form.custom_description),
       quantity,
+      status: INTERNAL_ORDER_LINE_STATUSES[1],
       supplier_cost: supplierCost,
       supplier_id: cleanOptionalValue(form.supplier_id),
       unit: cleanOptionalValue(form.unit) ?? "pieza",
@@ -627,87 +655,235 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
       return;
     }
 
-    const linesWithoutSupplier = pendingLines.filter((line) => !line.supplier_id);
-    const linesWithSupplier = pendingLines.filter((line) => line.supplier_id);
+    const { data: orderLinesData, error: orderLinesError } = await supabase
+      .from("internal_order_lines")
+      .select(
+        "id,product_id,brand,model,product_description,supplier_id,supplier_cost,quantity,unit,notes",
+      )
+      .eq("company_id", companyId)
+      .eq("internal_order_id", orderId)
+      .order("created_at", { ascending: true });
 
-    if (linesWithoutSupplier.length > 0) {
-      setWarningMessage("Esta partida no tiene proveedor asignado.");
-    } else {
-      setWarningMessage("");
-    }
-
-    if (linesWithSupplier.length === 0) {
-      setErrorMessage("No hay partidas pendientes con proveedor para generar compra.");
+    if (orderLinesError) {
+      setErrorMessage(orderLinesError.message);
       return;
     }
 
+    const orderLines = (orderLinesData ?? []) as InternalOrderLineRecord[];
+    const linesWithoutSupplier = orderLines.filter((line) => !line.supplier_id);
+    const linesWithSupplier = orderLines.filter((line) => line.supplier_id);
     const groupedLines = new Map<string, InternalOrderLineRecord[]>();
+
     linesWithSupplier.forEach((line) => {
       const supplierId = line.supplier_id!;
       groupedLines.set(supplierId, [...(groupedLines.get(supplierId) ?? []), line]);
     });
 
+    setWarningMessage(
+      linesWithoutSupplier.length > 0 ? "Hay partidas sin proveedor asignado." : "",
+    );
+
+    if (groupedLines.size === 0) {
+      setErrorMessage("No hay partidas con proveedor para generar compra.");
+      setGeneratedPurchaseRunIds([]);
+      return;
+    }
+
     setIsGenerating(true);
     setErrorMessage("");
     setSuccessMessage("");
+    setGeneratedPurchaseRunIds([]);
 
     try {
-      const createdRunCount = groupedLines.size;
+      const readyRunIds: string[] = [];
+      let createdRunCount = 0;
+      let createdLineCount = 0;
 
       for (const [supplierId, supplierLines] of groupedLines) {
-        const { data: runData, error: runError } = await supabase
+        const { data: existingRun, error: existingRunError } = await supabase
           .from("purchase_runs")
-          .insert({
-            company_id: companyId,
-            internal_order_id: orderId,
-            notes: `Generada desde la orden ${order?.folio || orderId}.`,
-            supplier_id: supplierId,
-          })
           .select("id")
-          .single();
-
-        if (runError || !runData) {
-          throw new Error(runError?.message ?? "No se pudo generar la compra.");
-        }
-
-        const { error: runLinesError } = await supabase
-          .from("purchase_run_lines")
-          .insert(
-            supplierLines.map((line) => ({
-              company_id: companyId,
-              brand: line.brand,
-              internal_order_line_id: line.id,
-              model: line.model,
-              product_id: line.product_id,
-              product_description: lineDescription(line),
-              purchase_run_id: runData.id,
-              quantity: toNumber(line.quantity) || 1,
-              unit: line.unit,
-            })),
-          );
-
-        if (runLinesError) {
-          throw new Error(runLinesError.message);
-        }
-
-        const { error: statusError } = await supabase
-          .from("internal_order_lines")
-          .update({ status: "en_compra" })
           .eq("company_id", companyId)
-          .in(
-            "id",
-            supplierLines.map((line) => line.id),
-          );
+          .eq("internal_order_id", orderId)
+          .eq("supplier_id", supplierId)
+          .limit(1)
+          .maybeSingle();
 
-        if (statusError) {
-          throw new Error(statusError.message);
+        if (existingRunError) {
+          throw new Error(existingRunError.message);
+        }
+
+        let purchaseRunId = existingRun?.id as string | undefined;
+
+        if (!purchaseRunId) {
+          const purchaseTotal = supplierLines.reduce(
+            (total, line) =>
+              total + toNumber(line.quantity) * toNumber(line.supplier_cost),
+            0,
+          );
+          const { data: runData, error: runError } = await supabase
+            .from("purchase_runs")
+            .insert({
+              company_id: companyId,
+              internal_order_id: orderId,
+              notes: `Generada desde orden #${order?.folio || orderId}`,
+              payment_status: "pendiente",
+              purchase_method: "recoleccion",
+              purchase_total: purchaseTotal,
+              status: "pendiente",
+              supplier_id: supplierId,
+            })
+            .select("id")
+            .single();
+
+          if (runError || !runData) {
+            throw new Error(runError?.message ?? "No se pudo generar la compra.");
+          }
+
+          purchaseRunId = runData.id as string;
+          createdRunCount += 1;
+        }
+
+        readyRunIds.push(purchaseRunId);
+
+        const internalOrderLineIds = supplierLines.map((line) => line.id);
+        const { data: existingRunLines, error: existingRunLinesError } =
+          await supabase
+            .from("purchase_run_lines")
+            .select("id,internal_order_line_id,expected_unit_cost,actual_unit_cost")
+            .eq("company_id", companyId)
+            .eq("purchase_run_id", purchaseRunId)
+            .in("internal_order_line_id", internalOrderLineIds);
+
+        if (existingRunLinesError) {
+          throw new Error(existingRunLinesError.message);
+        }
+
+        const existingRunLinesByOrderLineId = new Map(
+          (existingRunLines ?? [])
+            .map((line) => [
+              line.internal_order_line_id as string | null,
+              {
+                actual_unit_cost: line.actual_unit_cost as number | string | null,
+                expected_unit_cost: line.expected_unit_cost as number | string | null,
+                id: line.id as string,
+              },
+            ])
+            .filter(([internalOrderLineId]) => Boolean(internalOrderLineId)) as [
+            string,
+            {
+              actual_unit_cost: number | string | null;
+              expected_unit_cost: number | string | null;
+              id: string;
+            },
+          ][],
+        );
+        const missingLines = supplierLines.filter(
+          (line) => !existingRunLinesByOrderLineId.has(line.id),
+        );
+
+        if (missingLines.length > 0) {
+          const { error: runLinesError } = await supabase
+            .from("purchase_run_lines")
+            .insert(
+              missingLines.map((line) => {
+                const supplierCost = Number(line.supplier_cost ?? 0);
+                const quantity = Number(line.quantity ?? 1);
+
+                return {
+                  actual_unit_cost: Number.isFinite(supplierCost)
+                    ? supplierCost
+                    : 0,
+                  brand: line.brand,
+                  company_id: companyId,
+                  expected_unit_cost: Number.isFinite(supplierCost)
+                    ? supplierCost
+                    : 0,
+                  internal_order_line_id: line.id,
+                  model: line.model,
+                  notes: line.notes,
+                  product_id: line.product_id,
+                  product_description: line.product_description,
+                  purchase_run_id: purchaseRunId,
+                  quantity: Number.isFinite(quantity) ? quantity : 1,
+                  status: "pendiente",
+                  unit: line.unit || "pieza",
+                };
+              }),
+            );
+
+          if (runLinesError) {
+            throw new Error(runLinesError.message);
+          }
+
+          createdLineCount += missingLines.length;
+        }
+
+        for (const line of supplierLines) {
+          const existingLine = existingRunLinesByOrderLineId.get(line.id);
+          if (!existingLine) continue;
+
+          const supplierCost = numberWithDefault(line.supplier_cost, 0);
+          const quantity = numberWithDefault(line.quantity, 1);
+          const expectedCost = toNumber(existingLine.expected_unit_cost);
+          const actualCost = toNumber(existingLine.actual_unit_cost);
+
+          if (supplierCost > 0 && (expectedCost === 0 || actualCost === 0)) {
+            const { error: repairLineError } = await supabase
+              .from("purchase_run_lines")
+              .update({
+                actual_unit_cost: supplierCost,
+                brand: line.brand,
+                expected_unit_cost: supplierCost,
+                model: line.model,
+                notes: line.notes,
+                product_id: line.product_id,
+                product_description: line.product_description,
+                quantity,
+                unit: line.unit || "pieza",
+              })
+              .eq("company_id", companyId)
+              .eq("id", existingLine.id);
+
+            if (repairLineError) {
+              throw new Error(repairLineError.message);
+            }
+          }
+        }
+
+        const { data: runLinesForTotal, error: runLinesForTotalError } =
+          await supabase
+            .from("purchase_run_lines")
+            .select("quantity,actual_unit_cost")
+            .eq("company_id", companyId)
+            .eq("purchase_run_id", purchaseRunId);
+
+        if (runLinesForTotalError) {
+          throw new Error(runLinesForTotalError.message);
+        }
+
+        const purchaseTotal = (runLinesForTotal ?? []).reduce(
+          (total, line) =>
+            total +
+            toNumber(line.quantity as number | string | null) *
+              toNumber(line.actual_unit_cost as number | string | null),
+          0,
+        );
+
+        const { error: totalError } = await supabase
+          .from("purchase_runs")
+          .update({ purchase_total: purchaseTotal })
+          .eq("company_id", companyId)
+          .eq("id", purchaseRunId);
+
+        if (totalError) {
+          throw new Error(totalError.message);
         }
       }
 
+      setGeneratedPurchaseRunIds(readyRunIds);
       setSuccessMessage(
-        createdRunCount === 1
-          ? "Se generó 1 compra por proveedor."
-          : `Se generaron ${createdRunCount} compras por proveedor.`,
+        `Compras por proveedor listas: ${createdRunCount} nuevas, ${createdLineCount} partidas agregadas.`,
       );
       await loadLines(companyId);
       await loadPurchaseRuns(companyId, purchaseArchiveFilter);
@@ -946,11 +1122,11 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
         </Link>
         <button
           className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
-          disabled={isLoading || isGenerating || pendingLines.length === 0}
+          disabled={isLoading || isGenerating || lines.length === 0}
           onClick={generatePurchaseRunsBySupplier}
           type="button"
         >
-          {isGenerating ? "Generando..." : "Generar compra por proveedor"}
+          {isGenerating ? "Generando..." : "Generar compras por proveedor"}
         </button>
       </div>
 
@@ -968,7 +1144,27 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
 
       {successMessage ? (
         <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
-          {successMessage}
+          <p>{successMessage}</p>
+          {generatedPurchaseRunIds.length > 0 ? (
+            <div className="mt-2 flex flex-wrap gap-2">
+              {generatedPurchaseRunIds.map((purchaseRunId) => {
+                const run = purchaseRunsById.get(purchaseRunId);
+                const supplierName = run?.supplier_id
+                  ? suppliersById.get(run.supplier_id)?.name
+                  : null;
+
+                return (
+                  <Link
+                    className="rounded-md border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
+                    href={`/dashboard/compras/${purchaseRunId}`}
+                    key={purchaseRunId}
+                  >
+                    Ver compra {supplierName ? `- ${supplierName}` : ""}
+                  </Link>
+                );
+              })}
+            </div>
+          ) : null}
         </div>
       ) : null}
 
