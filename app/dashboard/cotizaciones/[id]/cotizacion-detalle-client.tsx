@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
 import { createClient } from "@/src/lib/supabase/client";
@@ -47,6 +48,8 @@ type QuotationRecord = {
 
 type QuotationLineRecord = {
   id: string;
+  company_id: string | null;
+  client_request_line_id: string | null;
   product_id: string | null;
   brand: string | null;
   custom_description: string | null;
@@ -63,6 +66,16 @@ type QuotationLineRecord = {
   selected: boolean | null;
   notes: string | null;
 };
+
+type InternalOrderRecord = {
+  id: string;
+  folio: string | null;
+  quotation_id: string | null;
+  status: string | null;
+  archived_at: string | null;
+};
+
+type OrderCreationMode = "selected_lines" | "all_lines";
 
 type LineFormState = {
   product_id: string;
@@ -233,6 +246,7 @@ function parseNumberInput(value: string) {
 export function CotizacionDetalleClient({
   quotationId,
 }: CotizacionDetalleClientProps) {
+  const router = useRouter();
   const supabase = useMemo(() => createClient(), []);
   const [catalogingLineId, setCatalogingLineId] = useState<string | null>(null);
   const [clients, setClients] = useState<ClientRecord[]>([]);
@@ -240,7 +254,11 @@ export function CotizacionDetalleClient({
   const [contacts, setContacts] = useState<ContactRecord[]>([]);
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
+  const [existingOrders, setExistingOrders] = useState<InternalOrderRecord[]>([]);
   const [form, setForm] = useState<LineFormState>(emptyLineForm);
+  const [isCheckingOrders, setIsCheckingOrders] = useState(false);
+  const [isCreatingOrder, setIsCreatingOrder] = useState(false);
+  const [isRestoringOrder, setIsRestoringOrder] = useState(false);
   const [isDeletingId, setIsDeletingId] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -249,7 +267,10 @@ export function CotizacionDetalleClient({
   const [products, setProducts] = useState<ProductRecord[]>([]);
   const [quickSupplierForm, setQuickSupplierForm] =
     useState<QuickSupplierFormState>(emptyQuickSupplierForm);
+  const [orderCreationMode, setOrderCreationMode] =
+    useState<OrderCreationMode>("selected_lines");
   const [quotation, setQuotation] = useState<QuotationRecord | null>(null);
+  const [showOrderOptions, setShowOrderOptions] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showQuickSupplierForm, setShowQuickSupplierForm] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
@@ -271,6 +292,15 @@ export function CotizacionDetalleClient({
     () => new Map(suppliers.map((supplier) => [supplier.id, supplier])),
     [suppliers],
   );
+  const activeExistingOrder = useMemo(
+    () => existingOrders.find((order) => !order.archived_at) ?? null,
+    [existingOrders],
+  );
+  const archivedExistingOrders = useMemo(
+    () => existingOrders.filter((order) => order.archived_at),
+    [existingOrders],
+  );
+  const archivedOrderForAction = archivedExistingOrders[0] ?? null;
 
   const selectedLines = useMemo(
     () => lines.filter((line) => Boolean(line.selected)),
@@ -360,6 +390,28 @@ export function CotizacionDetalleClient({
     [supabase],
   );
 
+  const loadExistingOrders = useCallback(
+    async (activeCompanyId: string) => {
+      const { data, error } = await supabase
+        .from("internal_orders")
+        .select("id,folio,quotation_id,status,archived_at")
+        .eq("company_id", activeCompanyId)
+        .eq("quotation_id", quotationId)
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        setErrorMessage(error.message);
+        setExistingOrders([]);
+        return { error, orders: [] };
+      }
+
+      const loadedOrders = (data ?? []) as InternalOrderRecord[];
+      setExistingOrders(loadedOrders);
+      return { error: null, orders: loadedOrders };
+    },
+    [quotationId, supabase],
+  );
+
   useEffect(() => {
     async function loadInitialData() {
       setIsLoading(true);
@@ -422,11 +474,13 @@ export function CotizacionDetalleClient({
       setQuotation(quotationData as QuotationRecord);
 
       const [
+        existingOrderResponse,
         clientsResponse,
         contactsResponse,
         productsResponse,
         suppliersResponse,
       ] = await Promise.all([
+        loadExistingOrders(activeCompanyId),
         supabase
           .from("clients")
           .select("id,name")
@@ -446,6 +500,7 @@ export function CotizacionDetalleClient({
       ]);
 
       const firstError =
+        existingOrderResponse.error ??
         clientsResponse.error ??
         contactsResponse.error ??
         productsResponse.error ??
@@ -467,7 +522,7 @@ export function CotizacionDetalleClient({
     }
 
     loadInitialData();
-  }, [loadLines, loadSuppliers, quotationId, supabase]);
+  }, [loadExistingOrders, loadLines, loadSuppliers, quotationId, supabase]);
 
   function lineDescription(line: QuotationLineRecord) {
     const productName = line.product_id
@@ -475,6 +530,33 @@ export function CotizacionDetalleClient({
       : null;
 
     return line.custom_description || productName || "Sin descripción";
+  }
+
+  function orderLineDescription(line: QuotationLineRecord) {
+    const productName = line.product_id
+      ? productsById.get(line.product_id)?.name
+      : null;
+
+    return productName || line.custom_description || "Sin descripción";
+  }
+
+  function archivedOrderNeedsNewOrderConfirmation(order: InternalOrderRecord) {
+    return ["facturado", "cobrado", "cancelado"].includes(
+      (order.status ?? "").toLowerCase(),
+    );
+  }
+
+  function archivedOrderConfirmationStatus(order: InternalOrderRecord) {
+    switch ((order.status ?? "").toLowerCase()) {
+      case "facturado":
+        return "facturada";
+      case "cobrado":
+        return "cobrada";
+      case "cancelado":
+        return "cancelada";
+      default:
+        return order.status ?? "archivada";
+    }
   }
 
   function handleProductChange(productId: string) {
@@ -952,6 +1034,187 @@ export function CotizacionDetalleClient({
     await loadLines(companyId);
   }
 
+  async function prepareOrderCreationOptions() {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    if (showOrderOptions) {
+      setShowOrderOptions(false);
+      return;
+    }
+
+    setIsCheckingOrders(true);
+    setOrderCreationMode("selected_lines");
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    await loadExistingOrders(companyId);
+
+    setShowOrderOptions(true);
+    setIsCheckingOrders(false);
+  }
+
+  async function restoreArchivedOrder() {
+    if (!companyId || !archivedOrderForAction) {
+      setErrorMessage("No se encontró una orden archivada para restaurar.");
+      return;
+    }
+
+    setIsRestoringOrder(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const { error } = await supabase
+      .from("internal_orders")
+      .update({
+        archived_at: null,
+        archived_by: null,
+        archive_reason: null,
+      })
+      .eq("company_id", companyId)
+      .eq("id", archivedOrderForAction.id);
+
+    setIsRestoringOrder(false);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return;
+    }
+
+    router.push(`/dashboard/ordenes/${archivedOrderForAction.id}`);
+  }
+
+  async function createOrderFromQuotation(allowArchivedDuplicate = false) {
+    if (!companyId || !quotation) {
+      setErrorMessage("No se encontró la empresa o la cotización.");
+      setSuccessMessage("");
+      return;
+    }
+
+    setIsCreatingOrder(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+
+    const { orders: refreshedOrders, error: duplicateError } =
+      await loadExistingOrders(companyId);
+
+    if (duplicateError) {
+      setIsCreatingOrder(false);
+      return;
+    }
+
+    const activeOrder =
+      refreshedOrders.find((order) => !order.archived_at) ?? null;
+    const archivedOrders = refreshedOrders.filter((order) => order.archived_at);
+    const firstArchivedOrder = archivedOrders[0] ?? null;
+
+    if (activeOrder) {
+      setIsCreatingOrder(false);
+      setErrorMessage("Ya existe una orden activa para esta cotización.");
+      setShowOrderOptions(true);
+      return;
+    }
+
+    if (firstArchivedOrder && !allowArchivedDuplicate) {
+      setIsCreatingOrder(false);
+      setShowOrderOptions(true);
+      return;
+    }
+
+    if (
+      firstArchivedOrder &&
+      archivedOrderNeedsNewOrderConfirmation(firstArchivedOrder) &&
+      !window.confirm(
+        `La orden anterior estaba ${archivedOrderConfirmationStatus(firstArchivedOrder)}. ¿Seguro que deseas crear una nueva orden?`,
+      )
+    ) {
+      setIsCreatingOrder(false);
+      return;
+    }
+
+    const linesToCopy =
+      orderCreationMode === "all_lines" ? lines : selectedLines;
+
+    if (linesToCopy.length === 0) {
+      setIsCreatingOrder(false);
+      setErrorMessage(
+        orderCreationMode === "selected_lines"
+          ? "No hay líneas elegidas para crear la orden."
+          : "No hay líneas para crear la orden.",
+      );
+      return;
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsCreatingOrder(false);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
+
+    const { data: orderData, error: orderError } = await supabase
+      .from("internal_orders")
+      .insert({
+        approved_at: new Date().toISOString().slice(0, 10),
+        company_id: companyId,
+        notes: `Generada desde cotización #${quotation.folio || "sin folio"}`,
+        quotation_id: quotationId,
+        responsible: user.email ?? null,
+        status: "por comprar",
+      })
+      .select("id,folio,quotation_id")
+      .single();
+
+    if (orderError || !orderData) {
+      setIsCreatingOrder(false);
+      setErrorMessage(orderError?.message ?? "No se pudo crear la orden.");
+      return;
+    }
+
+    const { error: linesError } = await supabase
+      .from("internal_order_lines")
+      .insert(
+        linesToCopy.map((line) => {
+          const product = line.product_id
+            ? productsById.get(line.product_id)
+            : undefined;
+
+          return {
+            brand: line.brand,
+            client_request_line_id: line.client_request_line_id,
+            company_id: line.company_id ?? companyId,
+            internal_order_id: orderData.id,
+            model: line.model,
+            notes: line.notes,
+            product_description: orderLineDescription(line),
+            product_id: line.product_id,
+            quantity: toNumber(line.quantity) || 1,
+            quotation_line_id: line.id,
+            sale_unit_price: line.final_unit_price,
+            status: "por comprar",
+            supplier_cost: line.supplier_cost,
+            supplier_id: line.supplier_id,
+            unit: product?.unit || "pieza",
+          };
+        }),
+      );
+
+    setIsCreatingOrder(false);
+
+    if (linesError) {
+      setErrorMessage(linesError.message);
+      return;
+    }
+
+    router.push(`/dashboard/ordenes/${orderData.id}`);
+  }
+
   const clientName = quotation?.client_id
     ? clientsById.get(quotation.client_id)?.name ?? "Cliente no disponible"
     : "Sin cliente";
@@ -981,14 +1244,24 @@ export function CotizacionDetalleClient({
           >
             Volver a cotizaciones
           </Link>
-          <button
-            className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
-            disabled={!quotation || isLoading}
-            onClick={() => window.print()}
-            type="button"
-          >
-            Exportar PDF
-          </button>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+            <button
+              className="h-10 rounded-md border border-emerald-200 px-4 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+              disabled={!quotation || isLoading || isCheckingOrders}
+              onClick={prepareOrderCreationOptions}
+              type="button"
+            >
+              {isCheckingOrders ? "Revisando..." : "Crear orden"}
+            </button>
+            <button
+              className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+              disabled={!quotation || isLoading}
+              onClick={() => window.print()}
+              type="button"
+            >
+              Exportar PDF
+            </button>
+          </div>
         </div>
 
         {errorMessage ? (
@@ -1001,6 +1274,127 @@ export function CotizacionDetalleClient({
           <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">
             {successMessage}
           </div>
+        ) : null}
+
+        {activeExistingOrder ? (
+          <div className="rounded-lg border border-amber-200 bg-amber-50 px-5 py-3 text-sm text-amber-800">
+            Ya existe una orden activa para esta cotización.{" "}
+            <Link
+              className="font-semibold underline"
+              href={`/dashboard/ordenes/${activeExistingOrder.id}`}
+            >
+              Ver orden
+            </Link>
+            .
+          </div>
+        ) : null}
+
+        {showOrderOptions ? (
+          <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+            <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+              <div className="space-y-3">
+                <h3 className="text-lg font-semibold text-stone-950">
+                  Crear orden desde cotización
+                </h3>
+                {activeExistingOrder ? (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    <p className="font-semibold">
+                      Ya existe una orden activa para esta cotización.
+                    </p>
+                    <Link
+                      className="mt-2 inline-flex h-9 items-center rounded-md border border-amber-300 px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-100"
+                      href={`/dashboard/ordenes/${activeExistingOrder.id}`}
+                    >
+                      Ver orden
+                    </Link>
+                  </div>
+                ) : null}
+                {!activeExistingOrder && archivedOrderForAction ? (
+                  <div className="rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                    <p className="font-semibold">
+                      Ya existe una orden archivada para esta cotización.
+                    </p>
+                    <p className="mt-1">
+                      Orden #{archivedOrderForAction.folio || "sin folio"}
+                      {archivedOrderForAction.status
+                        ? ` · ${archivedOrderForAction.status}`
+                        : ""}
+                    </p>
+                    <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+                      <button
+                        className="h-9 rounded-md bg-emerald-800 px-3 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+                        disabled={isRestoringOrder || isCreatingOrder}
+                        onClick={restoreArchivedOrder}
+                        type="button"
+                      >
+                        {isRestoringOrder
+                          ? "Restaurando..."
+                          : "Restaurar orden archivada"}
+                      </button>
+                      <button
+                        className="h-9 rounded-md border border-amber-300 px-3 text-sm font-semibold text-amber-900 transition hover:bg-amber-100 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={isRestoringOrder || isCreatingOrder}
+                        onClick={() => createOrderFromQuotation(true)}
+                        type="button"
+                      >
+                        {isCreatingOrder ? "Creando..." : "Crear nueva orden"}
+                      </button>
+                      <button
+                        className="h-9 rounded-md border border-stone-300 px-3 text-sm font-medium text-stone-700 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60"
+                        disabled={isRestoringOrder || isCreatingOrder}
+                        onClick={() => setShowOrderOptions(false)}
+                        type="button"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+                <div className="flex flex-col gap-2 text-sm text-stone-800 sm:flex-row">
+                  <label className="flex items-center gap-2 rounded-md border border-stone-200 px-3 py-2">
+                    <input
+                      checked={orderCreationMode === "selected_lines"}
+                      className="h-4 w-4 border-stone-300 text-emerald-800"
+                      disabled={isCreatingOrder || Boolean(activeExistingOrder)}
+                      onChange={() => setOrderCreationMode("selected_lines")}
+                      type="radio"
+                    />
+                    Solo líneas elegidas
+                  </label>
+                  <label className="flex items-center gap-2 rounded-md border border-stone-200 px-3 py-2">
+                    <input
+                      checked={orderCreationMode === "all_lines"}
+                      className="h-4 w-4 border-stone-300 text-emerald-800"
+                      disabled={isCreatingOrder || Boolean(activeExistingOrder)}
+                      onChange={() => setOrderCreationMode("all_lines")}
+                      type="radio"
+                    />
+                    Todas las líneas
+                  </label>
+                </div>
+                <p className="text-sm text-stone-600">
+                  Se copiarán{" "}
+                  {orderCreationMode === "all_lines"
+                    ? lines.length
+                    : selectedLines.length}{" "}
+                  partidas a Órdenes.
+                </p>
+              </div>
+              <button
+                className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+                disabled={
+                  isCreatingOrder ||
+                  isRestoringOrder ||
+                  Boolean(activeExistingOrder) ||
+                  Boolean(archivedOrderForAction)
+                }
+                onClick={() => createOrderFromQuotation()}
+                type="button"
+              >
+                {isCreatingOrder ? "Creando..." : "Crear orden"}
+              </button>
+            </div>
+          </section>
         ) : null}
 
         <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">

@@ -68,7 +68,10 @@ type InternalOrderLineRecord = {
   supplier_cost: number | string | null;
   quantity: number | string | null;
   unit: string | null;
+  sale_unit_price: number | string | null;
   line_total: number | string | null;
+  line_cost_total: number | string | null;
+  line_profit: number | string | null;
   notes: string | null;
   status: string | null;
 };
@@ -164,6 +167,14 @@ function formatMoney(value: number | string | null | undefined) {
   }).format(toNumber(value));
 }
 
+function formatPercent(value: number) {
+  return new Intl.NumberFormat("es-MX", {
+    maximumFractionDigits: 1,
+    minimumFractionDigits: 1,
+    style: "percent",
+  }).format(value);
+}
+
 function contactLabel(contact: ContactRecord | undefined) {
   if (!contact) {
     return "Sin contacto";
@@ -176,6 +187,8 @@ function contactLabel(contact: ContactRecord | undefined) {
 
 function lineStatusClass(status: string | null) {
   switch (status) {
+    case "por comprar":
+      return "border-amber-200 bg-amber-50 text-amber-800";
     case "en_compra":
       return "border-sky-200 bg-sky-50 text-sky-800";
     case "completada":
@@ -284,13 +297,28 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     purchaseRuns.every((run) => selectedPurchaseRunIds.has(run.id));
 
   const pendingLines = useMemo(
-    () => lines.filter((line) => (line.status ?? "pendiente") === "pendiente"),
+    () =>
+      lines.filter((line) =>
+        ["pendiente", "por comprar"].includes(line.status ?? "por comprar"),
+      ),
     [lines],
   );
-  const orderTotal = useMemo(
-    () => lines.reduce((total, line) => total + toNumber(line.line_total), 0),
+  const orderSummary = useMemo(
+    () =>
+      lines.reduce(
+        (summary, line) => ({
+          costTotal: summary.costTotal + toNumber(line.line_cost_total),
+          profit: summary.profit + toNumber(line.line_profit),
+          saleTotal: summary.saleTotal + toNumber(line.line_total),
+        }),
+        { costTotal: 0, profit: 0, saleTotal: 0 },
+      ),
     [lines],
   );
+  const orderMargin =
+    orderSummary.saleTotal > 0
+      ? orderSummary.profit / orderSummary.saleTotal
+      : 0;
 
   const loadLines = useCallback(
     async (activeCompanyId: string) => {
@@ -951,10 +979,10 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Folio
+                Orden
               </p>
               <p className="mt-1 text-base font-semibold text-stone-950">
-                {order.folio || "Sin folio"}
+                Orden #{order.folio || "sin folio"}
               </p>
             </div>
             <div>
@@ -968,15 +996,17 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                 Cotización
               </p>
               <p className="mt-1 text-sm text-stone-800">
-                {quotation?.folio || "Sin cotización"}
+                {order.quotation_id
+                  ? `Cotización #${quotation?.folio || "sin folio"}`
+                  : "Orden manual"}
               </p>
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Fecha
+                Fecha aprobación
               </p>
               <p className="mt-1 text-sm text-stone-800">
-                {formatDate(order.created_at)}
+                {formatDate(order.approved_at)}
               </p>
             </div>
             <div>
@@ -989,10 +1019,10 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Total interno
+                Venta total
               </p>
               <p className="mt-1 text-sm font-semibold text-stone-950">
-                {formatMoney(orderTotal)}
+                {formatMoney(orderSummary.saleTotal)}
               </p>
             </div>
             <div>
@@ -1021,6 +1051,41 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
             </div>
           </div>
         )}
+      </section>
+
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <div className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+            Venta total
+          </p>
+          <p className="mt-2 text-xl font-semibold text-stone-950">
+            {formatMoney(orderSummary.saleTotal)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-amber-200 bg-amber-50 p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-amber-700">
+            Costo total
+          </p>
+          <p className="mt-2 text-xl font-semibold text-amber-950">
+            {formatMoney(orderSummary.costTotal)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-emerald-700">
+            Utilidad
+          </p>
+          <p className="mt-2 text-xl font-semibold text-emerald-950">
+            {formatMoney(orderSummary.profit)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-sky-200 bg-sky-50 p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-sky-700">
+            Margen
+          </p>
+          <p className="mt-2 text-xl font-semibold text-sky-950">
+            {formatPercent(orderMargin)}
+          </p>
+        </div>
       </section>
 
       <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
@@ -1256,7 +1321,8 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                         {lineDescription(line)}
                       </span>
                       <span className="mt-1 block text-sm text-stone-600">
-                        {supplierName} · Cantidad {toNumber(line.quantity)} · {formatMoney(line.line_total)}
+                        {supplierName} · Cantidad {toNumber(line.quantity)}{" "}
+                        {line.unit || "pieza"} · {formatMoney(line.line_total)}
                       </span>
                       <span className="mt-1 block text-sm text-stone-600">
                         {brandModelText(line.brand, line.model)}
@@ -1269,7 +1335,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                         </span>
                       ) : null}
                       <span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${lineStatusClass(line.status)}`}>
-                        {line.status || "pendiente"}
+                        {line.status || "por comprar"}
                       </span>
                       <span className="text-sm font-medium text-emerald-800">
                         {isExpanded ? "Ocultar" : "Ver"}
@@ -1306,10 +1372,12 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                       </div>
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                          Línea cotización
+                          Origen
                         </p>
                         <p className="mt-1 text-stone-800">
-                          {line.quotation_line_id || "Manual"}
+                          {line.quotation_line_id
+                            ? "Copiada de cotización"
+                            : "Partida manual"}
                         </p>
                       </div>
                       <div>
@@ -1322,18 +1390,58 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                       </div>
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                          Unidad
+                          Cantidad
                         </p>
                         <p className="mt-1 text-stone-800">
-                          {line.unit || "Sin unidad"}
+                          {toNumber(line.quantity)}
                         </p>
                       </div>
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                          Total
+                          Unidad
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {line.unit || "pieza"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          Precio venta
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {formatMoney(line.sale_unit_price)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          Venta total
                         </p>
                         <p className="mt-1 text-stone-800">
                           {formatMoney(line.line_total)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          Costo total
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {formatMoney(line.line_cost_total)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          Utilidad
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {formatMoney(line.line_profit)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          Estado
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {line.status || "por comprar"}
                         </p>
                       </div>
                       <div className="md:col-span-3">

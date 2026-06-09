@@ -66,7 +66,15 @@ type InternalOrderRecord = {
 
 type InternalOrderLineRecord = {
   internal_order_id: string | null;
+  line_cost_total: number | string | null;
+  line_profit: number | string | null;
   line_total: number | string | null;
+};
+
+type OrderTotals = {
+  costTotal: number;
+  profit: number;
+  saleTotal: number;
 };
 
 type SourceMode = "manual" | "full_quotation" | "selected_lines";
@@ -187,7 +195,7 @@ export function OrdenesClient() {
   );
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [successMessage, setSuccessMessage] = useState("");
-  const [totalsByOrderId, setTotalsByOrderId] = useState<Map<string, number>>(
+  const [totalsByOrderId, setTotalsByOrderId] = useState<Map<string, OrderTotals>>(
     new Map(),
   );
 
@@ -282,7 +290,7 @@ export function OrdenesClient() {
 
       const { data: linesData, error: linesError } = await supabase
         .from("internal_order_lines")
-        .select("internal_order_id,line_total")
+        .select("internal_order_id,line_total,line_cost_total,line_profit")
         .eq("company_id", activeCompanyId)
         .in("internal_order_id", orderIds);
 
@@ -292,17 +300,24 @@ export function OrdenesClient() {
         return;
       }
 
-      const nextTotals = new Map<string, number>();
+      const nextTotals = new Map<string, OrderTotals>();
       ((linesData ?? []) as InternalOrderLineRecord[]).forEach((line) => {
         if (!line.internal_order_id) {
           return;
         }
 
-        nextTotals.set(
-          line.internal_order_id,
-          (nextTotals.get(line.internal_order_id) ?? 0) +
-            toNumber(line.line_total),
-        );
+        const currentTotals =
+          nextTotals.get(line.internal_order_id) ?? {
+            costTotal: 0,
+            profit: 0,
+            saleTotal: 0,
+          };
+
+        nextTotals.set(line.internal_order_id, {
+          costTotal: currentTotals.costTotal + toNumber(line.line_cost_total),
+          profit: currentTotals.profit + toNumber(line.line_profit),
+          saleTotal: currentTotals.saleTotal + toNumber(line.line_total),
+        });
       });
       setTotalsByOrderId(nextTotals);
     },
@@ -730,13 +745,84 @@ export function OrdenesClient() {
     setErrorMessage("");
     setSuccessMessage("");
 
+    if (form.sourceMode !== "manual") {
+      const { data: existingOrders, error: duplicateError } = await supabase
+        .from("internal_orders")
+        .select("id,folio,status,archived_at")
+        .eq("company_id", companyId)
+        .eq("quotation_id", form.quotation_id)
+        .order("created_at", { ascending: false });
+
+      if (duplicateError) {
+        setIsSaving(false);
+        setErrorMessage(duplicateError.message);
+        return;
+      }
+
+      const activeOrder = (existingOrders ?? []).find(
+        (order) => !order.archived_at,
+      );
+      const archivedOrder = (existingOrders ?? []).find(
+        (order) => order.archived_at,
+      );
+
+      if (activeOrder) {
+        setIsSaving(false);
+        setErrorMessage("Ya existe una orden activa para esta cotización.");
+        router.push(`/dashboard/ordenes/${activeOrder.id}`);
+        return;
+      }
+
+      if (
+        archivedOrder &&
+        ["facturado", "cobrado", "cancelado"].includes(
+          (archivedOrder.status ?? "").toLowerCase(),
+        ) &&
+        !window.confirm(
+          `La orden anterior estaba ${
+            archivedOrder.status === "facturado"
+              ? "facturada"
+              : archivedOrder.status === "cobrado"
+                ? "cobrada"
+                : "cancelada"
+          }. ¿Seguro que deseas crear una nueva orden?`,
+        )
+      ) {
+        setIsSaving(false);
+        return;
+      }
+    }
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser();
+
+    if (userError || !user) {
+      setIsSaving(false);
+      setErrorMessage("No se pudo validar la sesión activa.");
+      return;
+    }
+
     const { data: orderData, error: orderError } = await supabase
       .from("internal_orders")
       .insert({
+        approved_at:
+          form.sourceMode === "manual"
+            ? null
+            : new Date().toISOString().slice(0, 10),
         company_id: companyId,
-        notes: cleanOptionalValue(form.notes),
+        notes:
+          cleanOptionalValue(form.notes) ??
+          (selectedQuotation?.folio
+            ? `Generada desde cotización #${selectedQuotation.folio}`
+            : null),
         quotation_id:
-          form.sourceMode === "manual" ? null : cleanOptionalValue(form.quotation_id),
+          form.sourceMode === "manual"
+            ? null
+            : cleanOptionalValue(form.quotation_id),
+        responsible: form.sourceMode === "manual" ? null : user.email ?? null,
+        status: form.sourceMode === "manual" ? "abierta" : "por comprar",
       })
       .select("id")
       .single();
@@ -759,16 +845,18 @@ export function OrdenesClient() {
             notes: line.notes,
             product_id: line.product_id,
             product_description:
+              (line.product_id ? productsById.get(line.product_id)?.name : null) ||
               line.custom_description ||
-              (line.product_id
-                ? productsById.get(line.product_id)?.description ||
-                  productsById.get(line.product_id)?.name
-                : null),
+              "Sin descripción",
             quantity: toNumber(line.quantity) || 1,
             quotation_line_id: line.id,
+            sale_unit_price: line.final_unit_price,
+            status: "por comprar",
             supplier_cost: line.supplier_cost,
             supplier_id: line.supplier_id,
-            unit: line.product_id ? productsById.get(line.product_id)?.unit : null,
+            unit:
+              (line.product_id ? productsById.get(line.product_id)?.unit : null) ||
+              "pieza",
           })),
         );
 
@@ -1027,7 +1115,9 @@ export function OrdenesClient() {
                   <th className="px-5 py-3">Responsable</th>
                   <th className="px-5 py-3">Fecha</th>
                   <th className="px-5 py-3">Estado</th>
-                  <th className="px-5 py-3 text-right">Total</th>
+                  <th className="px-5 py-3 text-right">Venta</th>
+                  <th className="px-5 py-3 text-right">Costo</th>
+                  <th className="px-5 py-3 text-right">Utilidad</th>
                   <th className="px-5 py-3 text-right">Acciones</th>
                 </tr>
               </thead>
@@ -1036,6 +1126,12 @@ export function OrdenesClient() {
                   const quotation = order.quotation_id
                     ? quotationsById.get(order.quotation_id)
                     : undefined;
+                  const totals =
+                    totalsByOrderId.get(order.id) ?? {
+                      costTotal: 0,
+                      profit: 0,
+                      saleTotal: 0,
+                    };
 
                   return (
                     <tr key={order.id}>
@@ -1060,13 +1156,15 @@ export function OrdenesClient() {
                         {clientLabelForOrder(order, quotationsById, clientsById)}
                       </td>
                       <td className="px-5 py-4 text-stone-700">
-                        {quotation?.folio || "Sin cotización"}
+                        {order.quotation_id
+                          ? quotation?.folio || "Sin cotización"
+                          : "Orden manual"}
                       </td>
                       <td className="px-5 py-4 text-stone-700">
                         {order.responsible || "Sin responsable"}
                       </td>
                       <td className="px-5 py-4 text-stone-700">
-                        {formatDate(order.created_at)}
+                        {formatDate(order.approved_at)}
                       </td>
                       <td className="px-5 py-4">
                         <div className="flex flex-wrap gap-2">
@@ -1077,7 +1175,13 @@ export function OrdenesClient() {
                         </div>
                       </td>
                       <td className="px-5 py-4 text-right font-medium text-stone-950">
-                        {formatMoney(totalsByOrderId.get(order.id) ?? 0)}
+                        {formatMoney(totals.saleTotal)}
+                      </td>
+                      <td className="px-5 py-4 text-right text-stone-700">
+                        {formatMoney(totals.costTotal)}
+                      </td>
+                      <td className="px-5 py-4 text-right font-medium text-stone-950">
+                        {formatMoney(totals.profit)}
                       </td>
                       <td className="px-5 py-4">
                         <div className="flex justify-end gap-2">
