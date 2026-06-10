@@ -39,6 +39,8 @@ type QuotationLineRecord = {
   quantity: number | string | null;
   line_total: number | string | null;
   selected: boolean | null;
+  tax_included: boolean | null;
+  tax_rate: number | string | null;
   notes: string | null;
 };
 
@@ -431,7 +433,7 @@ export function OrdenesClient() {
     const { data, error } = await supabase
       .from("quotation_lines")
       .select(
-        "id,quotation_id,product_id,custom_description,supplier_id,brand,model,notes,supplier_cost,suggested_price,final_unit_price,quantity,line_total,selected",
+        "id,quotation_id,product_id,custom_description,supplier_id,brand,model,notes,supplier_cost,suggested_price,final_unit_price,quantity,line_total,selected,tax_rate,tax_included",
       )
       .eq("company_id", companyId)
       .eq("quotation_id", quotationId)
@@ -878,6 +880,8 @@ export function OrdenesClient() {
             status: INTERNAL_ORDER_LINE_STATUSES[1],
             supplier_cost: line.supplier_cost,
             supplier_id: line.supplier_id,
+            tax_included: Boolean(line.tax_included),
+            tax_rate: toNumber(line.tax_rate),
             unit:
               (line.product_id ? productsById.get(line.product_id)?.unit : null) ||
               "pieza",

@@ -12,6 +12,7 @@ import {
   DELIVERY_STATUSES,
   INTERNAL_ORDER_LINE_STATUSES,
 } from "@/app/dashboard/statuses";
+import { calculateTaxLineAmounts, formatTaxRate } from "@/src/lib/tax";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -78,6 +79,8 @@ type InternalOrderLineRecord = {
   line_profit: number | string | null;
   notes: string | null;
   status: string | null;
+  tax_included: boolean | null;
+  tax_rate: number | string | null;
 };
 
 type PurchaseRunRecord = {
@@ -367,18 +370,28 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   const orderSummary = useMemo(
     () =>
       lines.reduce(
-        (summary, line) => ({
-          costTotal: summary.costTotal + toNumber(line.line_cost_total),
-          profit: summary.profit + toNumber(line.line_profit),
-          saleTotal: summary.saleTotal + toNumber(line.line_total),
-        }),
-        { costTotal: 0, profit: 0, saleTotal: 0 },
+        (summary, line) => {
+          const lineAmounts = calculateTaxLineAmounts({
+            quantity: line.quantity,
+            taxIncluded: line.tax_included,
+            taxRate: line.tax_rate,
+            unitPrice: line.sale_unit_price,
+          });
+          return {
+            costTotal: summary.costTotal + toNumber(line.line_cost_total),
+            profit: summary.profit + toNumber(line.line_profit),
+            saleSubtotal: summary.saleSubtotal + lineAmounts.subtotal,
+            saleTax: summary.saleTax + lineAmounts.tax,
+            saleTotal: summary.saleTotal + lineAmounts.total,
+          };
+        },
+        { costTotal: 0, profit: 0, saleSubtotal: 0, saleTax: 0, saleTotal: 0 },
       ),
     [lines],
   );
   const orderMargin =
-    orderSummary.saleTotal > 0
-      ? orderSummary.profit / orderSummary.saleTotal
+    orderSummary.saleSubtotal > 0
+      ? orderSummary.profit / orderSummary.saleSubtotal
       : 0;
 
   const loadLines = useCallback(
@@ -1071,6 +1084,8 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
             product_id: line.product_id,
             quantity,
             status: deliveryStatusFor(quantity, deliveredQuantity),
+            tax_included: Boolean(line.tax_included),
+            tax_rate: toNumber(line.tax_rate),
             unit: line.unit || "pieza",
           };
         }),
@@ -1521,7 +1536,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
             </div>
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Venta total
+                Total
               </p>
               <p className="mt-1 text-sm font-semibold text-stone-950">
                 {formatMoney(orderSummary.saleTotal)}
@@ -1555,10 +1570,26 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
         )}
       </section>
 
-      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <section className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
         <div className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-            Venta total
+            Subtotal
+          </p>
+          <p className="mt-2 text-xl font-semibold text-stone-950">
+            {formatMoney(orderSummary.saleSubtotal)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+            IVA
+          </p>
+          <p className="mt-2 text-xl font-semibold text-stone-950">
+            {formatMoney(orderSummary.saleTax)}
+          </p>
+        </div>
+        <div className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+          <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+            Total
           </p>
           <p className="mt-2 text-xl font-semibold text-stone-950">
             {formatMoney(orderSummary.saleTotal)}
@@ -1807,6 +1838,12 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                 ? suppliersById.get(line.supplier_id)?.name ??
                   "Proveedor no encontrado"
                 : "Sin proveedor";
+              const lineAmounts = calculateTaxLineAmounts({
+                quantity: line.quantity,
+                taxIncluded: line.tax_included,
+                taxRate: line.tax_rate,
+                unitPrice: line.sale_unit_price,
+              });
 
               return (
                 <article
@@ -1824,7 +1861,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                       </span>
                       <span className="mt-1 block text-sm text-stone-600">
                         {supplierName} · Cantidad {toNumber(line.quantity)}{" "}
-                        {line.unit || "pieza"} · {formatMoney(line.line_total)}
+                        {line.unit || "pieza"} · {formatMoney(lineAmounts.total)}
                       </span>
                       <span className="mt-1 block text-sm text-stone-600">
                         {brandModelText(line.brand, line.model)}
@@ -1916,10 +1953,42 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                       </div>
                       <div>
                         <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                          Venta total
+                          IVA
                         </p>
                         <p className="mt-1 text-stone-800">
-                          {formatMoney(line.line_total)}
+                          {formatTaxRate(line.tax_rate)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          Precio incluye IVA
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {line.tax_included ? "Sí" : "No"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          Subtotal
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {formatMoney(lineAmounts.subtotal)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          IVA importe
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {formatMoney(lineAmounts.tax)}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                          Total
+                        </p>
+                        <p className="mt-1 text-stone-800">
+                          {formatMoney(lineAmounts.total)}
                         </p>
                       </div>
                       <div>

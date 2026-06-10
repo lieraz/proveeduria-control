@@ -9,6 +9,7 @@ import {
   ArchiveFilterToggle,
   BulkArchiveActionBar,
 } from "@/app/dashboard/archive-controls";
+import { calculateTaxLineAmounts, numericValue } from "@/src/lib/tax";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = {
@@ -48,8 +49,12 @@ type QuotationRecord = {
 
 type QuotationLineRecord = {
   quotation_id: string | null;
+  final_unit_price: number | string | null;
   line_total: number | string | null;
+  quantity: number | string | null;
   selected: boolean | null;
+  tax_included: boolean | null;
+  tax_rate: number | string | null;
 };
 
 type QuotationFormState = {
@@ -103,15 +108,6 @@ function formatMoney(value: number) {
     currency: "MXN",
     style: "currency",
   }).format(value);
-}
-
-function toNumber(value: number | string | null | undefined) {
-  if (value === null || value === undefined || value === "") {
-    return 0;
-  }
-
-  const parsedValue = Number(value);
-  return Number.isFinite(parsedValue) ? parsedValue : 0;
 }
 
 function contactLabel(contact: ContactRecord | undefined) {
@@ -300,7 +296,7 @@ export function CotizacionesClient() {
 
       const { data: linesData, error: linesError } = await supabase
         .from("quotation_lines")
-        .select("quotation_id,line_total,selected")
+        .select("quotation_id,final_unit_price,line_total,quantity,selected,tax_rate,tax_included")
         .eq("company_id", activeCompanyId)
         .in("quotation_id", quotationIds);
 
@@ -316,9 +312,20 @@ export function CotizacionesClient() {
           return;
         }
 
+        const lineTotal =
+          line.final_unit_price === null || line.final_unit_price === undefined
+            ? numericValue(line.line_total) *
+              (line.tax_included ? 1 : 1 + numericValue(line.tax_rate))
+            : calculateTaxLineAmounts({
+                quantity: line.quantity,
+                taxIncluded: line.tax_included,
+                taxRate: line.tax_rate,
+                unitPrice: line.final_unit_price,
+              }).total;
+
         nextTotals.set(
           line.quotation_id,
-          (nextTotals.get(line.quotation_id) ?? 0) + toNumber(line.line_total),
+          (nextTotals.get(line.quotation_id) ?? 0) + lineTotal,
         );
       });
       setTotalsByQuotationId(nextTotals);

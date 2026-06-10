@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { AttachmentManager } from "@/app/dashboard/attachment-manager";
 import { INTERNAL_ORDER_LINE_STATUSES } from "@/app/dashboard/statuses";
+import { calculateTaxLineAmounts, formatTaxRate } from "@/src/lib/tax";
 import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
 import { createClient } from "@/src/lib/supabase/client";
 
@@ -65,6 +66,8 @@ type QuotationLineRecord = {
   line_profit: number | string | null;
   real_margin: number | string | null;
   selected: boolean | null;
+  tax_included: boolean | null;
+  tax_rate: number | string | null;
   notes: string | null;
 };
 
@@ -89,6 +92,8 @@ type LineFormState = {
   final_unit_price: string;
   quantity: string;
   selected: boolean;
+  tax_included: boolean;
+  tax_rate: string;
   notes: string;
 };
 
@@ -115,6 +120,8 @@ const emptyLineForm: LineFormState = {
   final_unit_price: "",
   quantity: "1",
   selected: false,
+  tax_included: false,
+  tax_rate: "0.16",
   notes: "",
 };
 
@@ -318,11 +325,34 @@ export function CotizacionDetalleClient({
   const selectedSubtotal = useMemo(
     () =>
       selectedLines.reduce(
-        (total, line) => total + toNumber(line.line_total),
+        (total, line) =>
+          total +
+          calculateTaxLineAmounts({
+            quantity: line.quantity,
+            taxIncluded: line.tax_included,
+            taxRate: line.tax_rate,
+            unitPrice: line.final_unit_price,
+          }).subtotal,
         0,
       ),
     [selectedLines],
   );
+  const selectedTax = useMemo(
+    () =>
+      selectedLines.reduce(
+        (total, line) =>
+          total +
+          calculateTaxLineAmounts({
+            quantity: line.quantity,
+            taxIncluded: line.tax_included,
+            taxRate: line.tax_rate,
+            unitPrice: line.final_unit_price,
+          }).tax,
+        0,
+      ),
+    [selectedLines],
+  );
+  const selectedTotal = selectedSubtotal + selectedTax;
   const selectedProfit = useMemo(
     () =>
       selectedLines.reduce(
@@ -338,18 +368,25 @@ export function CotizacionDetalleClient({
       (currentSummary, line) => {
         const quantity = toNumber(line.quantity);
         const lineCost = quantity * toNumber(line.supplier_cost);
-        const lineSale = quantity * toNumber(line.final_unit_price);
+        const lineAmounts = calculateTaxLineAmounts({
+          quantity: line.quantity,
+          taxIncluded: line.tax_included,
+          taxRate: line.tax_rate,
+          unitPrice: line.final_unit_price,
+        });
 
         return {
           costTotal: currentSummary.costTotal + lineCost,
-          saleTotal: currentSummary.saleTotal + lineSale,
+          saleSubtotal: currentSummary.saleSubtotal + lineAmounts.subtotal,
+          saleTax: currentSummary.saleTax + lineAmounts.tax,
+          saleTotal: currentSummary.saleTotal + lineAmounts.total,
         };
       },
-      { costTotal: 0, saleTotal: 0 },
+      { costTotal: 0, saleSubtotal: 0, saleTax: 0, saleTotal: 0 },
     );
-    const grossProfit = summary.saleTotal - summary.costTotal;
+    const grossProfit = summary.saleSubtotal - summary.costTotal;
     const realMargin =
-      summary.saleTotal > 0 ? grossProfit / summary.saleTotal : 0;
+      summary.saleSubtotal > 0 ? grossProfit / summary.saleSubtotal : 0;
 
     return {
       ...summary,
@@ -363,7 +400,7 @@ export function CotizacionDetalleClient({
       const { data, error } = await supabase
         .from("quotation_lines")
         .select(
-          "id,company_id,quotation_id,product_id,brand,custom_description,model,supplier_id,supplier_cost,target_margin,suggested_price,final_unit_price,quantity,line_total,line_profit,real_margin,selected,notes",
+          "id,company_id,quotation_id,product_id,brand,custom_description,model,supplier_id,supplier_cost,target_margin,suggested_price,final_unit_price,quantity,line_total,line_profit,real_margin,selected,tax_rate,tax_included,notes",
         )
         .eq("company_id", activeCompanyId)
         .eq("quotation_id", quotationId)
@@ -705,6 +742,14 @@ export function CotizacionDetalleClient({
       return;
     }
 
+    const taxRate =
+      form.tax_rate === "exempt" ? 0 : optionalNumber(form.tax_rate) ?? 0;
+
+    if (!Number.isFinite(taxRate) || taxRate < 0) {
+      setErrorMessage("El IVA debe ser 16%, 0% o exento.");
+      return;
+    }
+
     const syncedFinalUnitPrice =
       finalUnitPrice !== null
         ? roundMoney(finalUnitPrice)
@@ -732,6 +777,8 @@ export function CotizacionDetalleClient({
       selected: form.selected,
       supplier_cost: supplierCost === null ? null : roundMoney(supplierCost),
       supplier_id: cleanOptionalValue(form.supplier_id),
+      tax_included: form.tax_included,
+      tax_rate: taxRate,
       target_margin: syncedTargetMargin,
     };
 
@@ -791,6 +838,8 @@ export function CotizacionDetalleClient({
           ? ""
           : String(line.supplier_cost),
       supplier_id: line.supplier_id ?? "",
+      tax_included: Boolean(line.tax_included),
+      tax_rate: String(line.tax_rate ?? "0.16"),
       target_margin: String(line.target_margin ?? "0.40"),
     });
     setErrorMessage("");
@@ -1224,6 +1273,8 @@ export function CotizacionDetalleClient({
             status: INTERNAL_ORDER_LINE_STATUSES[1],
             supplier_cost: line.supplier_cost,
             supplier_id: line.supplier_id,
+            tax_included: Boolean(line.tax_included),
+            tax_rate: toNumber(line.tax_rate),
             unit: product?.unit || "pieza",
           };
         }),
@@ -1495,10 +1546,26 @@ export function CotizacionDetalleClient({
                 </div>
               </div>
 
-              <div className="grid gap-3 border-t border-stone-200 pt-5 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="grid gap-3 border-t border-stone-200 pt-5 sm:grid-cols-2 lg:grid-cols-6">
                 <div className="rounded-md border border-stone-200 bg-stone-50 p-4">
                   <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                    Venta Total
+                    Subtotal
+                  </p>
+                  <p className="mt-2 text-xl font-semibold text-stone-950">
+                    {formatMoney(quotationSummary.saleSubtotal)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-stone-200 bg-stone-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    IVA
+                  </p>
+                  <p className="mt-2 text-xl font-semibold text-stone-950">
+                    {formatMoney(quotationSummary.saleTax)}
+                  </p>
+                </div>
+                <div className="rounded-md border border-stone-200 bg-stone-50 p-4">
+                  <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                    Total
                   </p>
                   <p className="mt-2 text-xl font-semibold text-stone-950">
                     {formatMoney(quotationSummary.saleTotal)}
@@ -1894,6 +1961,31 @@ export function CotizacionDetalleClient({
             <div className="space-y-2">
               <label
                 className="text-sm font-medium text-stone-800"
+                htmlFor="tax_rate"
+              >
+                IVA
+              </label>
+              <select
+                className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                disabled={isLoading || isSaving || isSavingSupplier}
+                id="tax_rate"
+                onChange={(event) =>
+                  setForm((currentForm) => ({
+                    ...currentForm,
+                    tax_rate: event.target.value,
+                  }))
+                }
+                value={form.tax_rate}
+              >
+                <option value="0.16">16%</option>
+                <option value="0">0%</option>
+                <option value="exempt">Exento / sin IVA</option>
+              </select>
+            </div>
+
+            <div className="space-y-2">
+              <label
+                className="text-sm font-medium text-stone-800"
                 htmlFor="real_margin"
               >
                 Margen real
@@ -1947,6 +2039,22 @@ export function CotizacionDetalleClient({
               Elegida
             </label>
 
+            <label className="flex h-11 items-center gap-3 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800">
+              <input
+                checked={form.tax_included}
+                className="h-4 w-4 rounded border-stone-300 text-emerald-800"
+                disabled={isLoading || isSaving || isSavingSupplier}
+                onChange={(event) =>
+                  setForm((currentForm) => ({
+                    ...currentForm,
+                    tax_included: event.target.checked,
+                  }))
+                }
+                type="checkbox"
+              />
+              Precio incluye IVA
+            </label>
+
             <div className="space-y-2 lg:col-span-3">
               <label className="text-sm font-medium text-stone-800" htmlFor="notes">
                 Notas
@@ -1994,11 +2102,23 @@ export function CotizacionDetalleClient({
 
         <section className="rounded-lg border border-stone-200 bg-white shadow-sm">
           <div className="border-b border-stone-200 p-5">
-            <div className="grid gap-4 md:grid-cols-3">
+            <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
               <div>
-                <p className="text-sm text-stone-500">Total venta</p>
+                <p className="text-sm text-stone-500">Subtotal</p>
                 <p className="mt-1 text-xl font-semibold text-stone-950">
                   {formatMoney(selectedSubtotal)}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-stone-500">IVA</p>
+                <p className="mt-1 text-xl font-semibold text-stone-950">
+                  {formatMoney(selectedTax)}
+                </p>
+              </div>
+              <div>
+                <p className="text-sm text-stone-500">Total</p>
+                <p className="mt-1 text-xl font-semibold text-stone-950">
+                  {formatMoney(selectedTotal)}
                 </p>
               </div>
               <div>
@@ -2037,7 +2157,10 @@ export function CotizacionDetalleClient({
                     <th className="px-5 py-3 text-right">Margen objetivo</th>
                     <th className="px-5 py-3 text-right">Sugerido</th>
                     <th className="px-5 py-3 text-right">Precio final</th>
+                    <th className="px-5 py-3 text-right">IVA</th>
+                    <th className="px-5 py-3">Incluye IVA</th>
                     <th className="px-5 py-3 text-right">Cantidad</th>
+                    <th className="px-5 py-3 text-right">Subtotal</th>
                     <th className="px-5 py-3 text-right">Total</th>
                     <th className="px-5 py-3 text-right">Utilidad</th>
                     <th className="px-5 py-3 text-right">Margen real</th>
@@ -2046,7 +2169,15 @@ export function CotizacionDetalleClient({
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-stone-200 bg-white">
-                  {lines.map((line) => (
+                  {lines.map((line) => {
+                    const lineAmounts = calculateTaxLineAmounts({
+                      quantity: line.quantity,
+                      taxIncluded: line.tax_included,
+                      taxRate: line.tax_rate,
+                      unitPrice: line.final_unit_price,
+                    });
+
+                    return (
                     <tr key={line.id}>
                       <td className="px-5 py-4">
                         <input
@@ -2092,10 +2223,19 @@ export function CotizacionDetalleClient({
                         {formatMoney(line.final_unit_price)}
                       </td>
                       <td className="px-5 py-4 text-right text-stone-700">
+                        {formatTaxRate(line.tax_rate)}
+                      </td>
+                      <td className="px-5 py-4 text-stone-700">
+                        {line.tax_included ? "Sí" : "No"}
+                      </td>
+                      <td className="px-5 py-4 text-right text-stone-700">
                         {toNumber(line.quantity)}
                       </td>
                       <td className="px-5 py-4 text-right font-medium text-stone-950">
-                        {formatMoney(line.line_total)}
+                        {formatMoney(lineAmounts.subtotal)}
+                      </td>
+                      <td className="px-5 py-4 text-right font-medium text-stone-950">
+                        {formatMoney(lineAmounts.total)}
                       </td>
                       <td className="px-5 py-4 text-right text-stone-700">
                         {formatMoney(line.line_profit)}
@@ -2157,7 +2297,8 @@ export function CotizacionDetalleClient({
                         </div>
                       </td>
                     </tr>
-                  ))}
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
@@ -2232,11 +2373,20 @@ export function CotizacionDetalleClient({
                 <th className="py-3 pr-4">Marca/modelo</th>
                 <th className="py-3 pr-4 text-right">Cantidad</th>
                 <th className="py-3 pr-4 text-right">Precio unitario</th>
+                <th className="py-3 pr-4 text-right">IVA</th>
                 <th className="py-3 text-right">Total</th>
               </tr>
             </thead>
             <tbody>
-              {selectedLines.map((line) => (
+              {selectedLines.map((line) => {
+                const lineAmounts = calculateTaxLineAmounts({
+                  quantity: line.quantity,
+                  taxIncluded: line.tax_included,
+                  taxRate: line.tax_rate,
+                  unitPrice: line.final_unit_price,
+                });
+
+                return (
                 <tr className="border-b border-stone-200" key={line.id}>
                   <td className="py-3 pr-4">
                     <p className="font-medium text-stone-950">
@@ -2255,19 +2405,39 @@ export function CotizacionDetalleClient({
                   <td className="py-3 pr-4 text-right">
                     {formatMoney(line.final_unit_price)}
                   </td>
+                  <td className="py-3 pr-4 text-right">
+                    {formatTaxRate(line.tax_rate)}
+                  </td>
                   <td className="py-3 text-right">
-                    {formatMoney(line.line_total)}
+                    {formatMoney(lineAmounts.total)}
                   </td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
             <tfoot>
               <tr>
-                <td className="pt-5 text-right font-semibold" colSpan={4}>
-                  Total
+                <td className="pt-5 text-right font-semibold" colSpan={5}>
+                  Subtotal
                 </td>
                 <td className="pt-5 text-right text-lg font-semibold">
                   {formatMoney(selectedSubtotal)}
+                </td>
+              </tr>
+              <tr>
+                <td className="pt-2 text-right font-semibold" colSpan={5}>
+                  IVA
+                </td>
+                <td className="pt-2 text-right text-lg font-semibold">
+                  {formatMoney(selectedTax)}
+                </td>
+              </tr>
+              <tr>
+                <td className="pt-2 text-right font-semibold" colSpan={5}>
+                  Total
+                </td>
+                <td className="pt-2 text-right text-lg font-semibold">
+                  {formatMoney(selectedTotal)}
                 </td>
               </tr>
             </tfoot>

@@ -28,6 +28,8 @@ type InternalOrderLineRecord = {
   quantity: number | string | null;
   unit: string | null;
   notes: string | null;
+  tax_included: boolean | null;
+  tax_rate: number | string | null;
 };
 type DeliveryRecord = {
   id: string;
@@ -213,7 +215,7 @@ export function EntregasClient() {
 
     const { data, error } = await supabase
       .from("internal_order_lines")
-      .select("id,internal_order_id,product_id,product_description,brand,model,quantity,unit,notes")
+      .select("id,internal_order_id,product_id,product_description,brand,model,quantity,unit,notes,tax_rate,tax_included")
       .eq("company_id", activeCompanyId)
       .eq("internal_order_id", orderId)
       .order("created_at", { ascending: true });
@@ -367,6 +369,8 @@ export function EntregasClient() {
             product_id: line.product_id,
             quantity,
             status: deliveryStatusFor(quantity, deliveredQuantity),
+            tax_included: Boolean(line.tax_included),
+            tax_rate: toNumber(line.tax_rate),
             unit: line.unit || "pieza",
           };
         }),

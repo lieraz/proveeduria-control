@@ -7,6 +7,7 @@ import { Printer } from "lucide-react";
 import { AttachmentManager } from "@/app/dashboard/attachment-manager";
 import { ArchiveBadge } from "@/app/dashboard/archive-controls";
 import { DELIVERY_STATUSES, DELIVERY_TYPES } from "@/app/dashboard/statuses";
+import { formatTaxRate } from "@/src/lib/tax";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = { id: string; name: string | null };
@@ -23,6 +24,8 @@ type InternalOrderLineRecord = {
   quantity: number | string | null;
   unit: string | null;
   status: string | null;
+  tax_included: boolean | null;
+  tax_rate: number | string | null;
 };
 type DeliveryRecord = {
   id: string;
@@ -52,6 +55,8 @@ type DeliveryLineRecord = {
   delivered_quantity: number | string | null;
   unit: string | null;
   status: string | null;
+  tax_included: boolean | null;
+  tax_rate: number | string | null;
   notes: string | null;
 };
 type HeaderFormState = {
@@ -76,6 +81,8 @@ type LineFormState = {
   delivered_quantity: string;
   unit: string;
   status: string;
+  tax_included: boolean;
+  tax_rate: string;
   notes: string;
 };
 
@@ -92,6 +99,8 @@ const emptyLineForm: LineFormState = {
   delivered_quantity: "0",
   unit: "pieza",
   status: "pendiente",
+  tax_included: false,
+  tax_rate: "0.16",
   notes: "",
 };
 
@@ -223,7 +232,7 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
     }
     const { data, error } = await supabase
       .from("internal_order_lines")
-      .select("id,product_id,product_description,brand,model,quantity,unit,status")
+      .select("id,product_id,product_description,brand,model,quantity,unit,status,tax_rate,tax_included")
       .eq("company_id", activeCompanyId)
       .eq("internal_order_id", orderId)
       .order("created_at", { ascending: true });
@@ -359,6 +368,8 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
         product_id: orderLine?.product_id ?? currentForm.product_id,
         quantity,
         status: deliveryStatusFor(toNumber(quantity), toNumber(quantity)),
+        tax_included: Boolean(orderLine?.tax_included),
+        tax_rate: String(orderLine?.tax_rate ?? currentForm.tax_rate),
         unit: orderLine?.unit ?? currentForm.unit,
       };
     });
@@ -417,6 +428,8 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
       product_id: cleanOptionalValue(lineForm.product_id),
       quantity,
       status: lineForm.status || deliveryStatusFor(quantity, deliveredQuantity),
+      tax_included: lineForm.tax_included,
+      tax_rate: lineForm.tax_rate === "exempt" ? 0 : optionalNumber(lineForm.tax_rate) ?? 0,
       unit: cleanOptionalValue(lineForm.unit) ?? "pieza",
     };
     const query = editingLineId
@@ -447,6 +460,8 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
       product_id: line.product_id ?? "",
       quantity: line.quantity === null || line.quantity === undefined ? "1" : String(line.quantity),
       status: line.status ?? "pendiente",
+      tax_included: Boolean(line.tax_included),
+      tax_rate: String(line.tax_rate ?? "0.16"),
       unit: line.unit ?? "pieza",
     });
     setShowLineForm(true);
@@ -642,6 +657,17 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
               <Field id="quantity" label="Cantidad"><input className={inputClass} min="0.01" step="0.01" type="number" value={lineForm.quantity} onChange={(event) => updateLineQuantity("quantity", event.target.value)} /></Field>
               <Field id="delivered_quantity" label="Cantidad entregada"><input className={inputClass} min="0" step="0.01" type="number" value={lineForm.delivered_quantity} onChange={(event) => updateLineQuantity("delivered_quantity", event.target.value)} /></Field>
               <LineInput form={lineForm} id="unit" label="Unidad" setForm={setLineForm} />
+              <Field id="tax_rate" label="IVA">
+                <select className={inputClass} id="tax_rate" value={lineForm.tax_rate} onChange={(event) => setLineForm({ ...lineForm, tax_rate: event.target.value })}>
+                  <option value="0.16">16%</option>
+                  <option value="0">0%</option>
+                  <option value="exempt">Exento / sin IVA</option>
+                </select>
+              </Field>
+              <label className="flex h-11 items-center gap-3 rounded-md border border-stone-300 bg-white px-3 text-sm font-medium text-stone-800">
+                <input className="h-4 w-4 rounded border-stone-300 text-emerald-800" checked={lineForm.tax_included} onChange={(event) => setLineForm({ ...lineForm, tax_included: event.target.checked })} type="checkbox" />
+                Precio incluye IVA
+              </label>
               <Field id="line_status" label="Estado">
                 <select className={inputClass} id="line_status" value={lineForm.status} onChange={(event) => setLineForm({ ...lineForm, status: event.target.value })}>
                   {DELIVERY_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}
@@ -690,6 +716,8 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
                         <Info label="Producto" value={line.product_id ? productLabel(productsById.get(line.product_id)) : "Sin producto"} />
                         <Info label="Partida ligada" value={linkedOrderLine?.product_description || (line.internal_order_line_id ? "Partida no disponible" : "Sin liga")} />
                         <Info label="Estado sugerido" value={deliveryStatusFor(quantity, deliveredQuantity)} badge />
+                        <Info label="IVA" value={formatTaxRate(line.tax_rate)} />
+                        <Info label="Precio incluye IVA" value={line.tax_included ? "Sí" : "No"} />
                         <div className="md:col-span-3"><Info label="Notas" value={line.notes || "Sin notas"} /></div>
                         <div className="flex flex-wrap gap-2 md:col-span-3">
                           <button className="h-9 rounded-md border border-emerald-200 px-3 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50" type="button" onClick={() => startEditingLine(line)}>Editar</button>
@@ -790,7 +818,7 @@ function HeaderInput({ form, id, label, setForm, type = "text" }: { form: Header
   return <Field id={id} label={label}><input className={inputClass} id={id} type={type} value={form[id]} onChange={(event) => setForm((currentForm) => currentForm ? { ...currentForm, [id]: event.target.value } : currentForm)} /></Field>;
 }
 function LineInput({ form, id, label, setForm, type = "text" }: { form: LineFormState; id: keyof LineFormState; label: string; setForm: Dispatch<SetStateAction<LineFormState>>; type?: string }) {
-  return <Field id={id} label={label}><input className={inputClass} id={id} type={type} value={form[id]} onChange={(event) => setForm((currentForm) => ({ ...currentForm, [id]: event.target.value }))} /></Field>;
+  return <Field id={id} label={label}><input className={inputClass} id={id} type={type} value={String(form[id])} onChange={(event) => setForm((currentForm) => ({ ...currentForm, [id]: event.target.value }))} /></Field>;
 }
 function Info({ badge = false, label, value }: { badge?: boolean; label: string; value: string }) {
   return <div><p className="text-xs font-semibold uppercase tracking-wide text-stone-500">{label}</p>{badge ? <span className={`mt-1 inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${badgeClass(value)}`}>{value}</span> : <p className="mt-1 break-words text-sm text-stone-800">{value}</p>}</div>;

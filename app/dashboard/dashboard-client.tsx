@@ -619,7 +619,7 @@ export function DashboardClient() {
             "billing",
             companyId,
             [
-              "id,invoice_folio,status,invoiced_at,due_date,invoiced_amount,internal_order_id,archived_at",
+              "id,invoice_folio,status,invoiced_at,due_date,invoiced_amount,total_amount,internal_order_id,archived_at",
             ],
             "due_date",
           );
@@ -639,7 +639,7 @@ export function DashboardClient() {
               const clientName = quotation?.client_id
                 ? clientsById.get(quotation.client_id) ?? "Cliente no especificado"
                 : "Cliente no especificado";
-              const amount = formatMoney(row.invoiced_amount);
+              const amount = formatMoney(row.total_amount ?? row.invoiced_amount);
               return {
                 id,
                 title: textValue(row.invoice_folio)

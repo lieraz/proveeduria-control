@@ -1348,6 +1348,8 @@ export function SolicitudDetalleClient({
           selected: line.selected,
           supplier_cost: line.supplier_cost,
           supplier_id: line.supplier_id,
+          tax_included: false,
+          tax_rate: 0.16,
           target_margin: line.target_margin,
         })),
       );
