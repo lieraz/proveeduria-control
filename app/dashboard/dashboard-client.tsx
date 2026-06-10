@@ -619,7 +619,7 @@ export function DashboardClient() {
             "billing",
             companyId,
             [
-              "id,invoice_folio,status,invoiced_at,due_date,invoiced_amount,total_amount,internal_order_id,archived_at",
+              "id,invoice_folio,status,invoiced_at,due_date,invoiced_amount,total_amount,internal_order_id,delivery_id,archived_at",
             ],
             "due_date",
           );

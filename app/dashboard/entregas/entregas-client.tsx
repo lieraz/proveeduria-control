@@ -18,6 +18,14 @@ type ClientRecord = { id: string; name: string | null };
 type ContactRecord = { id: string; client_id: string | null; contact_name: string | null; organization_area: string | null; phone: string | null; email: string | null };
 type QuotationRecord = { id: string; folio: string | null; client_id: string | null };
 type InternalOrderRecord = { id: string; folio: string | null; quotation_id: string | null; status: string | null; archived_at?: string | null };
+type NestedClientRecord = { id: string; name: string | null };
+type NestedQuotationRecord = { id: string; client_id: string | null; clients: NestedClientRecord | NestedClientRecord[] | null };
+type NestedInternalOrderRecord = {
+  id: string;
+  folio: string | null;
+  quotation_id: string | null;
+  quotations: NestedQuotationRecord | NestedQuotationRecord[] | null;
+};
 type InternalOrderLineRecord = {
   id: string;
   internal_order_id: string | null;
@@ -47,6 +55,7 @@ type DeliveryRecord = {
   archived_at: string | null;
   archived_by: string | null;
   archive_reason: string | null;
+  internal_orders?: NestedInternalOrderRecord | NestedInternalOrderRecord[] | null;
 };
 
 type DeliveryFormState = {
@@ -97,11 +106,46 @@ function formatDate(value: string | null | undefined) {
   if (!value) return "Sin fecha";
   return value.replace("T", " ").slice(0, 16);
 }
-function shortDeliveryId(value: string) {
-  return `Entrega ${value.slice(0, 8)}`;
-}
 function normalize(value: string | null | undefined) {
   return value?.toLowerCase() ?? "";
+}
+function shortId(value: string) {
+  return value.slice(0, 8);
+}
+function relatedOne<T>(value: T | T[] | null | undefined) {
+  return Array.isArray(value) ? value[0] ?? null : value ?? null;
+}
+function deliveryOrder(delivery: DeliveryRecord, ordersById: Map<string, InternalOrderRecord>) {
+  const nestedOrder = relatedOne(delivery.internal_orders);
+  if (nestedOrder) return nestedOrder;
+  return delivery.internal_order_id ? ordersById.get(delivery.internal_order_id) ?? null : null;
+}
+function deliveryTitle(delivery: DeliveryRecord, ordersById: Map<string, InternalOrderRecord>) {
+  const order = deliveryOrder(delivery, ordersById);
+  if (!order && !delivery.internal_order_id) return "Entrega manual";
+  return `Entrega · ${order?.folio ? `Orden #${order.folio}` : "Orden sin folio"}`;
+}
+function orderFolioLabel(delivery: DeliveryRecord, ordersById: Map<string, InternalOrderRecord>) {
+  const order = deliveryOrder(delivery, ordersById);
+  if (!order && !delivery.internal_order_id) return "Entrega manual";
+  return order?.folio ? `Orden #${order.folio}` : "Orden sin folio";
+}
+function clientNameForDelivery(delivery: DeliveryRecord, ordersById: Map<string, InternalOrderRecord>, clientsById: Map<string, ClientRecord>, quotationsById: Map<string, QuotationRecord>) {
+  const nestedOrder = relatedOne(delivery.internal_orders);
+  const nestedQuotation = relatedOne(nestedOrder?.quotations);
+  const nestedClient = relatedOne(nestedQuotation?.clients);
+  if (nestedClient?.name) return nestedClient.name;
+
+  const order = deliveryOrder(delivery, ordersById);
+  if (!order?.quotation_id) return "Cliente no especificado";
+  const quotation = quotationsById.get(order.quotation_id);
+  return quotation?.client_id ? clientsById.get(quotation.client_id)?.name ?? "Cliente no especificado" : "Cliente no especificado";
+}
+function deliveryTypeLabel(value: string | null | undefined) {
+  return value || "manual";
+}
+function statusLabel(value: string | null | undefined) {
+  return value || "pendiente";
 }
 function badgeClass(value: string | null | undefined) {
   if (value === "entregado") return "border-emerald-200 bg-emerald-50 text-emerald-800";
@@ -173,8 +217,8 @@ export function EntregasClient() {
     const normalizedSearch = search.trim().toLowerCase();
     if (!normalizedSearch) return deliveries;
     return deliveries.filter((delivery) => {
-      const order = delivery.internal_order_id ? ordersById.get(delivery.internal_order_id) : undefined;
-      const clientName = clientNameForOrder(order);
+      const order = deliveryOrder(delivery, ordersById);
+      const clientName = clientNameForDelivery(delivery, ordersById, clientsById, quotationsById);
       return [
         delivery.id,
         order?.folio,
@@ -182,15 +226,42 @@ export function EntregasClient() {
         delivery.received_by,
         delivery.delivered_by,
         delivery.status,
+        delivery.delivery_type,
       ].some((value) => normalize(value).includes(normalizedSearch));
     });
-  }, [clientNameForOrder, deliveries, ordersById, search]);
+  }, [clientsById, deliveries, ordersById, quotationsById, search]);
 
   const loadDeliveries = useCallback(async (activeCompanyId: string, activeArchiveFilter: ArchiveFilter) => {
     setErrorMessage("");
     let query = supabase
       .from("deliveries")
-      .select("id,internal_order_id,delivery_type,scheduled_date,delivered_at,contact_id,delivery_address,delivered_by,received_by,status,notes,created_at,archived_at,archived_by,archive_reason")
+      .select(`
+        id,
+        internal_order_id,
+        delivery_type,
+        scheduled_date,
+        delivered_at,
+        contact_id,
+        delivery_address,
+        delivered_by,
+        received_by,
+        status,
+        notes,
+        created_at,
+        archived_at,
+        archived_by,
+        archive_reason,
+        internal_orders:internal_order_id(
+          id,
+          folio,
+          quotation_id,
+          quotations:quotation_id(
+            id,
+            client_id,
+            clients:client_id(id, name)
+          )
+        )
+      `)
       .eq("company_id", activeCompanyId)
       .order("created_at", { ascending: false });
 
@@ -583,20 +654,24 @@ export function EntregasClient() {
               </thead>
               <tbody className="divide-y divide-stone-200 bg-white">
                 {filteredDeliveries.map((delivery) => {
-                  const order = delivery.internal_order_id ? ordersById.get(delivery.internal_order_id) : undefined;
+                  const clientName = clientNameForDelivery(delivery, ordersById, clientsById, quotationsById);
                   return (
                     <tr className="align-top" key={delivery.id}>
                       <td className="px-5 py-4"><input checked={selectedDeliveryIds.has(delivery.id)} onChange={() => toggleDeliverySelection(delivery.id)} type="checkbox" /></td>
-                      <td className="px-5 py-4 font-semibold text-stone-950"><Link className="text-emerald-800 hover:underline" href={`/dashboard/entregas/${delivery.id}`}>{shortDeliveryId(delivery.id)}</Link>{delivery.archived_at ? <span className="mt-2 block"><ArchiveBadge /></span> : null}</td>
-                      <td className="px-5 py-4">{order?.folio ? `Orden #${order.folio}` : "Sin folio"}</td>
-                      <td className="px-5 py-4">{clientNameForOrder(order)}</td>
-                      <td className="px-5 py-4">{delivery.delivery_type || "manual"}</td>
+                      <td className="px-5 py-4 font-semibold text-stone-950">
+                        <Link className="text-emerald-800 hover:underline" href={`/dashboard/entregas/${delivery.id}`}>{deliveryTitle(delivery, ordersById)}</Link>
+                        <span className="mt-1 block text-xs font-medium text-stone-500">ID corto: {shortId(delivery.id)}</span>
+                        {delivery.archived_at ? <span className="mt-2 block"><ArchiveBadge /></span> : null}
+                      </td>
+                      <td className="px-5 py-4">{orderFolioLabel(delivery, ordersById)}</td>
+                      <td className="px-5 py-4">{clientName}</td>
+                      <td className="px-5 py-4">{deliveryTypeLabel(delivery.delivery_type)}</td>
                       <td className="px-5 py-4">{formatDate(delivery.scheduled_date)}</td>
                       <td className="px-5 py-4">{formatDate(delivery.delivered_at)}</td>
-                      <td className="px-5 py-4"><span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${badgeClass(delivery.status)}`}>{delivery.status || "pendiente"}</span></td>
-                      <td className="px-5 py-4">{delivery.received_by || "Sin dato"}</td>
-                      <td className="px-5 py-4">{delivery.delivered_by || "Sin dato"}</td>
-                      <td className="px-5 py-4"><Link className="text-sm font-semibold text-emerald-800 hover:underline" href={`/dashboard/entregas/${delivery.id}`}>Ver</Link></td>
+                      <td className="px-5 py-4"><span className={`rounded-full border px-2.5 py-1 text-xs font-semibold ${badgeClass(delivery.status)}`}>{statusLabel(delivery.status)}</span></td>
+                      <td className="px-5 py-4">{delivery.received_by || "Sin receptor"}</td>
+                      <td className="px-5 py-4">{delivery.delivered_by || "Sin repartidor"}</td>
+                      <td className="px-5 py-4"><Link className="text-sm font-semibold text-emerald-800 hover:underline" href={`/dashboard/entregas/${delivery.id}`}>Ver detalle</Link></td>
                     </tr>
                   );
                 })}

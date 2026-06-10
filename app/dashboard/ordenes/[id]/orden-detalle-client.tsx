@@ -266,7 +266,9 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   const [generatedDeliveryId, setGeneratedDeliveryId] = useState<string | null>(
     null,
   );
+  const [generatedBillingId, setGeneratedBillingId] = useState<string | null>(null);
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingBilling, setIsGeneratingBilling] = useState(false);
   const [isGeneratingDelivery, setIsGeneratingDelivery] = useState(false);
   const [isBulkUpdatingPurchases, setIsBulkUpdatingPurchases] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -667,6 +669,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     setIsSaving(true);
     setErrorMessage("");
     setSuccessMessage("");
+    setGeneratedBillingId(null);
     setGeneratedPurchaseRunIds([]);
 
     const { error } = await supabase.from("internal_order_lines").insert({
@@ -740,6 +743,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     setIsGenerating(true);
     setErrorMessage("");
     setSuccessMessage("");
+    setGeneratedBillingId(null);
     setGeneratedPurchaseRunIds([]);
 
     try {
@@ -946,6 +950,82 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     }
   }
 
+  async function generateBillingFromOrder() {
+    if (!companyId || !order) {
+      setErrorMessage("No se encontró la empresa o la orden activa.");
+      return;
+    }
+    if (lines.length === 0) {
+      setErrorMessage("La orden no tiene partidas para facturar.");
+      return;
+    }
+
+    const shouldGenerate = window.confirm("Esta factura se generará desde la orden, no desde una entrega. Úsalo solo si necesitas facturar antes de registrar entrega.");
+    if (!shouldGenerate) return;
+
+    setIsGeneratingBilling(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    setGeneratedBillingId(null);
+
+    const { data: existingBilling, error: existingBillingError } = await supabase
+      .from("billing")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("internal_order_id", orderId)
+      .is("delivery_id", null)
+      .is("archived_at", null)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingBillingError) {
+      setIsGeneratingBilling(false);
+      setErrorMessage(existingBillingError.message);
+      return;
+    }
+
+    if (existingBilling?.id) {
+      setIsGeneratingBilling(false);
+      setGeneratedBillingId(existingBilling.id as string);
+      setSuccessMessage("Ya existe facturación activa generada desde esta orden.");
+      return;
+    }
+
+    const subtotal = Math.round((orderSummary.saleSubtotal + Number.EPSILON) * 100) / 100;
+    const taxAmount = Math.round((orderSummary.saleTax + Number.EPSILON) * 100) / 100;
+    const totalAmount = Math.round((orderSummary.saleTotal + Number.EPSILON) * 100) / 100;
+
+    if (totalAmount <= 0) {
+      setIsGeneratingBilling(false);
+      setErrorMessage("No se pudo calcular un total facturable mayor a cero. Revisa los precios de venta de la orden.");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("billing")
+      .insert({
+        company_id: companyId,
+        delivery_id: null,
+        internal_order_id: orderId,
+        invoiced_amount: totalAmount,
+        status: "pendiente de facturar",
+        subtotal,
+        tax_amount: taxAmount,
+        total_amount: totalAmount,
+      })
+      .select("id")
+      .single();
+
+    setIsGeneratingBilling(false);
+    if (error || !data) {
+      setErrorMessage(error?.message ?? "No se pudo generar la facturación desde la orden.");
+      return;
+    }
+
+    setGeneratedBillingId(data.id as string);
+    setSuccessMessage("Facturación generada desde la orden.");
+  }
+
   function toggleDeliveryForm() {
     if (showDeliveryForm) {
       setShowDeliveryForm(false);
@@ -962,6 +1042,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
       ),
     );
     setGeneratedDeliveryId(null);
+    setGeneratedBillingId(null);
     setErrorMessage("");
     setSuccessMessage("");
     setShowDeliveryForm(true);
@@ -1039,6 +1120,7 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     setIsGeneratingDelivery(true);
     setErrorMessage("");
     setSuccessMessage("");
+    setGeneratedBillingId(null);
     setGeneratedDeliveryId(null);
 
     try {
@@ -1345,6 +1427,14 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
             Generar entrega
           </button>
           <button
+            className="h-10 rounded-md border border-amber-200 px-4 text-sm font-semibold text-amber-800 transition hover:border-amber-300 hover:bg-amber-50 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isLoading || isGeneratingBilling || lines.length === 0}
+            onClick={generateBillingFromOrder}
+            type="button"
+          >
+            {isGeneratingBilling ? "Generando..." : "Generar factura desde orden"}
+          </button>
+          <button
             className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
             disabled={isLoading || isGenerating || lines.length === 0}
             onClick={generatePurchaseRunsBySupplier}
@@ -1397,6 +1487,16 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
                 href={`/dashboard/entregas/${generatedDeliveryId}`}
               >
                 Ver entrega
+              </Link>
+            </div>
+          ) : null}
+          {generatedBillingId ? (
+            <div className="mt-2">
+              <Link
+                className="rounded-md border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
+                href={`/dashboard/facturacion/${generatedBillingId}`}
+              >
+                Ver facturación
               </Link>
             </div>
           ) : null}

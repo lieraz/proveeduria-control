@@ -7,7 +7,7 @@ import { Printer } from "lucide-react";
 import { AttachmentManager } from "@/app/dashboard/attachment-manager";
 import { ArchiveBadge } from "@/app/dashboard/archive-controls";
 import { DELIVERY_STATUSES, DELIVERY_TYPES } from "@/app/dashboard/statuses";
-import { formatTaxRate } from "@/src/lib/tax";
+import { calculateTaxLineAmounts, formatTaxRate } from "@/src/lib/tax";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ClientRecord = { id: string; name: string | null };
@@ -24,6 +24,7 @@ type InternalOrderLineRecord = {
   quantity: number | string | null;
   unit: string | null;
   status: string | null;
+  sale_unit_price?: number | string | null;
   tax_included: boolean | null;
   tax_rate: number | string | null;
 };
@@ -165,8 +166,10 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
   const [editingLineId, setEditingLineId] = useState<string | null>(null);
   const [errorMessage, setErrorMessage] = useState("");
   const [expandedLineIds, setExpandedLineIds] = useState<Set<string>>(new Set());
+  const [generatedBillingId, setGeneratedBillingId] = useState<string | null>(null);
   const [headerForm, setHeaderForm] = useState<HeaderFormState | null>(null);
   const [isArchiveUpdating, setIsArchiveUpdating] = useState(false);
+  const [isGeneratingBilling, setIsGeneratingBilling] = useState(false);
   const [isHeaderSaving, setIsHeaderSaving] = useState(false);
   const [isLineSaving, setIsLineSaving] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -232,7 +235,7 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
     }
     const { data, error } = await supabase
       .from("internal_order_lines")
-      .select("id,product_id,product_description,brand,model,quantity,unit,status,tax_rate,tax_included")
+      .select("id,product_id,product_description,brand,model,quantity,unit,status,sale_unit_price,tax_rate,tax_included")
       .eq("company_id", activeCompanyId)
       .eq("internal_order_id", orderId)
       .order("created_at", { ascending: true });
@@ -545,6 +548,95 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
     setSuccessMessage("Entrega restaurada.");
   }
 
+  async function generateBillingFromDelivery() {
+    if (!companyId || !delivery) return;
+    if (!delivery.internal_order_id) {
+      setErrorMessage("La entrega no tiene una orden interna ligada.");
+      return;
+    }
+    if (lines.length === 0) {
+      setErrorMessage("La entrega no tiene partidas para facturar.");
+      return;
+    }
+
+    setIsGeneratingBilling(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    setGeneratedBillingId(null);
+
+    const { data: existingBilling, error: existingBillingError } = await supabase
+      .from("billing")
+      .select("id")
+      .eq("company_id", companyId)
+      .eq("delivery_id", delivery.id)
+      .limit(1)
+      .maybeSingle();
+
+    if (existingBillingError) {
+      setIsGeneratingBilling(false);
+      setErrorMessage(existingBillingError.message);
+      return;
+    }
+
+    if (existingBilling?.id) {
+      setIsGeneratingBilling(false);
+      setGeneratedBillingId(existingBilling.id as string);
+      setSuccessMessage("Ya existe facturación para esta entrega.");
+      return;
+    }
+
+    const summary = lines.reduce(
+      (currentSummary, line) => {
+        const orderLine = line.internal_order_line_id ? orderLinesById.get(line.internal_order_line_id) : undefined;
+        const amounts = calculateTaxLineAmounts({
+          quantity: line.delivered_quantity ?? line.quantity,
+          taxIncluded: line.tax_included ?? orderLine?.tax_included,
+          taxRate: line.tax_rate ?? orderLine?.tax_rate,
+          unitPrice: orderLine?.sale_unit_price,
+        });
+        return {
+          subtotal: currentSummary.subtotal + amounts.subtotal,
+          taxAmount: currentSummary.taxAmount + amounts.tax,
+          totalAmount: currentSummary.totalAmount + amounts.total,
+        };
+      },
+      { subtotal: 0, taxAmount: 0, totalAmount: 0 },
+    );
+    const subtotal = Math.round((summary.subtotal + Number.EPSILON) * 100) / 100;
+    const taxAmount = Math.round((summary.taxAmount + Number.EPSILON) * 100) / 100;
+    const totalAmount = Math.round((summary.totalAmount + Number.EPSILON) * 100) / 100;
+
+    if (totalAmount <= 0) {
+      setIsGeneratingBilling(false);
+      setErrorMessage("No se pudo calcular un total facturable mayor a cero. Revisa los precios de venta de la orden.");
+      return;
+    }
+
+    const { data, error } = await supabase
+      .from("billing")
+      .insert({
+        company_id: companyId,
+        delivered_at: delivery.delivered_at,
+        delivery_id: delivery.id,
+        internal_order_id: delivery.internal_order_id,
+        invoiced_amount: totalAmount,
+        status: "pendiente de facturar",
+        subtotal,
+        tax_amount: taxAmount,
+        total_amount: totalAmount,
+      })
+      .select("id")
+      .single();
+
+    setIsGeneratingBilling(false);
+    if (error || !data) {
+      setErrorMessage(error?.message ?? "No se pudo generar la facturación.");
+      return;
+    }
+    setGeneratedBillingId(data.id as string);
+    setSuccessMessage("Facturación generada desde la entrega.");
+  }
+
   function cancelHeaderEdit() {
     setHeaderForm(delivery ? headerFormFromDelivery(delivery) : null);
     setShowHeaderForm(false);
@@ -571,12 +663,13 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
             ) : (
               <button className="h-10 rounded-md border border-stone-300 px-4 text-sm font-semibold text-stone-800 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60" disabled={isLoading || isArchiveUpdating || !delivery} onClick={archiveDelivery} type="button">Archivar</button>
             )}
+            <button className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300" disabled={isLoading || isGeneratingBilling || !delivery} onClick={generateBillingFromDelivery} type="button">{isGeneratingBilling ? "Generando..." : "Generar factura / cobranza"}</button>
             <button className="inline-flex h-10 items-center justify-center gap-2 rounded-md border border-stone-300 px-4 text-sm font-semibold text-stone-800 transition hover:border-stone-400 hover:bg-stone-50 disabled:cursor-not-allowed disabled:opacity-60" disabled={isLoading || !delivery} onClick={() => window.print()} type="button"><Printer className="h-4 w-4" aria-hidden="true" /> Imprimir entrega</button>
           </div>
         </div>
 
         {errorMessage ? <div className="rounded-lg border border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">{errorMessage}</div> : null}
-        {successMessage ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">{successMessage}</div> : null}
+        {successMessage ? <div className="rounded-lg border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-800">{successMessage}{generatedBillingId ? <Link className="ml-2 font-semibold underline" href={`/dashboard/facturacion/${generatedBillingId}`}>Ver facturación</Link> : null}</div> : null}
 
         <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
           {isLoading || !delivery ? (

@@ -34,3 +34,10 @@ export const DELIVERY_STATUSES = [
 ] as const;
 
 export const DELIVERY_TYPES = ["total", "parcial", "manual"] as const;
+
+export const BILLING_STATUSES = [
+  "pendiente de facturar",
+  "facturado",
+  "vencido",
+  "pagado",
+] as const;
