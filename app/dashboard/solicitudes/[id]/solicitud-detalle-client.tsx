@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AttachmentManager } from "@/app/dashboard/attachment-manager";
 import { createClient } from "@/src/lib/supabase/client";
 import type {
   ClientRequestLineInsert,
@@ -2597,6 +2598,21 @@ export function SolicitudDetalleClient({
           </div>
         )}
       </section>
+
+      {companyId && request ? (
+        <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 border-b border-stone-200 pb-4">
+            <h3 className="text-lg font-semibold text-stone-950">
+              Archivos de solicitud
+            </h3>
+          </div>
+          <AttachmentManager
+            companyId={companyId}
+            entityId={requestId}
+            entityType="client_request"
+          />
+        </section>
+      ) : null}
     </div>
   );
 }

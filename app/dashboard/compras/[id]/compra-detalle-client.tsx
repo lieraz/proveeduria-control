@@ -4,6 +4,7 @@ import Link from "next/link";
 import type { Dispatch, ReactNode, SetStateAction } from "react";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import { Printer } from "lucide-react";
+import { AttachmentManager } from "@/app/dashboard/attachment-manager";
 import { ArchiveBadge } from "@/app/dashboard/archive-controls";
 import {
   PURCHASE_RUN_LINE_STATUSES,
@@ -876,6 +877,21 @@ export function CompraDetalleClient({ purchaseRunId }: CompraDetalleClientProps)
           </div>
         )}
       </section>
+
+      {companyId && purchaseRun ? (
+        <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 border-b border-stone-200 pb-4">
+            <h3 className="text-lg font-semibold text-stone-950">
+              Tickets y evidencias
+            </h3>
+          </div>
+          <AttachmentManager
+            companyId={companyId}
+            entityId={purchaseRunId}
+            entityType="purchase_run"
+          />
+        </section>
+      ) : null}
     </div>
     </>
   );

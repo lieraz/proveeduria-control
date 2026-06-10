@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AttachmentManager } from "@/app/dashboard/attachment-manager";
 import { INTERNAL_ORDER_LINE_STATUSES } from "@/app/dashboard/statuses";
 import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
 import { createClient } from "@/src/lib/supabase/client";
@@ -2162,6 +2163,21 @@ export function CotizacionDetalleClient({
             </div>
           )}
         </section>
+
+        {companyId && quotation ? (
+          <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+            <div className="mb-5 border-b border-stone-200 pb-4">
+              <h3 className="text-lg font-semibold text-stone-950">
+                Archivos de cotización
+              </h3>
+            </div>
+            <AttachmentManager
+              companyId={companyId}
+              entityId={quotationId}
+              entityType="quotation"
+            />
+          </section>
+        ) : null}
       </div>
 
       {quotation ? (

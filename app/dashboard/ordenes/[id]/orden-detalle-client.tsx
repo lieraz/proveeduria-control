@@ -9,6 +9,7 @@ import {
   BulkArchiveActionBar,
 } from "@/app/dashboard/archive-controls";
 import {
+  DELIVERY_STATUSES,
   INTERNAL_ORDER_LINE_STATUSES,
 } from "@/app/dashboard/statuses";
 import { createClient } from "@/src/lib/supabase/client";
@@ -101,6 +102,21 @@ type PurchaseRunLineRecord = {
   unit: string | null;
   status: string | null;
 };
+
+type DeliveryRecord = {
+  id: string;
+};
+
+type DeliveryLineRecord = {
+  internal_order_line_id: string | null;
+  quantity: number | string | null;
+  delivered_quantity: number | string | null;
+};
+
+type DeliveryPartialLineState = Record<
+  string,
+  { deliveredQuantity: string; selected: boolean }
+>;
 
 type LineFormState = {
   product_id: string;
@@ -224,6 +240,18 @@ function brandModelText(
   return [brand, model].filter(Boolean).join(" / ") || "Sin marca/modelo";
 }
 
+function deliveryStatusFor(quantity: number, deliveredQuantity: number) {
+  if (deliveredQuantity >= quantity && quantity > 0) {
+    return "entregado";
+  }
+
+  if (deliveredQuantity > 0) {
+    return "parcial";
+  }
+
+  return DELIVERY_STATUSES[0];
+}
+
 export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   const supabase = useMemo(() => createClient(), []);
   const [clients, setClients] = useState<ClientRecord[]>([]);
@@ -232,7 +260,11 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
   const [errorMessage, setErrorMessage] = useState("");
   const [expandedLineIds, setExpandedLineIds] = useState<Set<string>>(new Set());
   const [form, setForm] = useState<LineFormState>(emptyLineForm);
+  const [generatedDeliveryId, setGeneratedDeliveryId] = useState<string | null>(
+    null,
+  );
   const [isGenerating, setIsGenerating] = useState(false);
+  const [isGeneratingDelivery, setIsGeneratingDelivery] = useState(false);
   const [isBulkUpdatingPurchases, setIsBulkUpdatingPurchases] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
@@ -253,6 +285,9 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     Set<string>
   >(new Set());
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showDeliveryForm, setShowDeliveryForm] = useState(false);
+  const [deliveryPartialLines, setDeliveryPartialLines] =
+    useState<DeliveryPartialLineState>({});
   const [successMessage, setSuccessMessage] = useState("");
   const [suppliers, setSuppliers] = useState<SupplierRecord[]>([]);
   const [updatingPurchaseArchiveId, setUpdatingPurchaseArchiveId] = useState<
@@ -898,6 +933,171 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
     }
   }
 
+  function toggleDeliveryForm() {
+    if (showDeliveryForm) {
+      setShowDeliveryForm(false);
+      setDeliveryPartialLines({});
+      return;
+    }
+
+    setDeliveryPartialLines(
+      Object.fromEntries(
+        lines.map((line) => [
+          line.id,
+          { deliveredQuantity: String(toNumber(line.quantity)), selected: true },
+        ]),
+      ),
+    );
+    setGeneratedDeliveryId(null);
+    setErrorMessage("");
+    setSuccessMessage("");
+    setShowDeliveryForm(true);
+  }
+
+  async function orderAlreadyHasFullDelivery(activeCompanyId: string) {
+    const { data: deliveryData, error: deliveryError } = await supabase
+      .from("deliveries")
+      .select("id")
+      .eq("company_id", activeCompanyId)
+      .eq("internal_order_id", orderId)
+      .is("archived_at", null);
+
+    if (deliveryError) {
+      throw new Error(deliveryError.message);
+    }
+
+    const deliveries = (deliveryData ?? []) as DeliveryRecord[];
+    if (deliveries.length === 0 || lines.length === 0) {
+      return false;
+    }
+
+    const { data: deliveryLineData, error: deliveryLineError } = await supabase
+      .from("delivery_lines")
+      .select("internal_order_line_id,quantity,delivered_quantity")
+      .eq("company_id", activeCompanyId)
+      .in(
+        "delivery_id",
+        deliveries.map((delivery) => delivery.id),
+      );
+
+    if (deliveryLineError) {
+      throw new Error(deliveryLineError.message);
+    }
+
+    const deliveredByOrderLine = new Map<string, number>();
+    ((deliveryLineData ?? []) as DeliveryLineRecord[]).forEach((line) => {
+      if (!line.internal_order_line_id) {
+        return;
+      }
+
+      deliveredByOrderLine.set(
+        line.internal_order_line_id,
+        (deliveredByOrderLine.get(line.internal_order_line_id) ?? 0) +
+          toNumber(line.delivered_quantity),
+      );
+    });
+
+    return lines.every(
+      (line) => (deliveredByOrderLine.get(line.id) ?? 0) >= toNumber(line.quantity),
+    );
+  }
+
+  async function generateDelivery(deliveryType: "total" | "parcial") {
+    if (!companyId) {
+      setErrorMessage("No se encontró la empresa del usuario.");
+      return;
+    }
+
+    if (lines.length === 0) {
+      setErrorMessage("La orden no tiene partidas para entregar.");
+      return;
+    }
+
+    const selectedLines =
+      deliveryType === "total"
+        ? lines
+        : lines.filter((line) => deliveryPartialLines[line.id]?.selected);
+
+    if (selectedLines.length === 0) {
+      setErrorMessage("Selecciona al menos una partida para la entrega parcial.");
+      return;
+    }
+
+    setIsGeneratingDelivery(true);
+    setErrorMessage("");
+    setSuccessMessage("");
+    setGeneratedDeliveryId(null);
+
+    try {
+      if (deliveryType === "total" && (await orderAlreadyHasFullDelivery(companyId))) {
+        setErrorMessage("Esta orden ya tiene una entrega completa registrada.");
+        return;
+      }
+
+      const { data: deliveryData, error: deliveryError } = await supabase
+        .from("deliveries")
+        .insert({
+          company_id: companyId,
+          delivery_type: deliveryType,
+          internal_order_id: orderId,
+          notes: `Generada desde orden #${order?.folio || orderId}`,
+          status: deliveryType === "total" ? "entregado" : "parcial",
+        })
+        .select("id")
+        .single();
+
+      if (deliveryError || !deliveryData) {
+        throw new Error(deliveryError?.message ?? "No se pudo crear la entrega.");
+      }
+
+      const deliveryId = deliveryData.id as string;
+      const { error: linesError } = await supabase.from("delivery_lines").insert(
+        selectedLines.map((line) => {
+          const quantity = toNumber(line.quantity);
+          const deliveredQuantity =
+            deliveryType === "total"
+              ? quantity
+              : toNumber(deliveryPartialLines[line.id]?.deliveredQuantity);
+
+          return {
+            brand: line.brand,
+            company_id: companyId,
+            delivered_quantity: deliveredQuantity,
+            delivery_id: deliveryId,
+            internal_order_line_id: line.id,
+            model: line.model,
+            notes: line.notes,
+            product_description: line.product_description,
+            product_id: line.product_id,
+            quantity,
+            status: deliveryStatusFor(quantity, deliveredQuantity),
+            unit: line.unit || "pieza",
+          };
+        }),
+      );
+
+      if (linesError) {
+        throw new Error(linesError.message);
+      }
+
+      setGeneratedDeliveryId(deliveryId);
+      setSuccessMessage(
+        deliveryType === "total"
+          ? "Entrega total generada correctamente."
+          : "Entrega parcial generada correctamente.",
+      );
+      setShowDeliveryForm(false);
+    } catch (error) {
+      setErrorMessage(
+        error instanceof Error
+          ? error.message
+          : "No se pudo generar la entrega.",
+      );
+    } finally {
+      setIsGeneratingDelivery(false);
+    }
+  }
+
   async function handlePurchaseArchiveFilterChange(nextFilter: ArchiveFilter) {
     setPurchaseArchiveFilter(nextFilter);
     setSelectedPurchaseRunIds(new Set());
@@ -1120,14 +1320,24 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
         >
           Volver a órdenes
         </Link>
-        <button
-          className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
-          disabled={isLoading || isGenerating || lines.length === 0}
-          onClick={generatePurchaseRunsBySupplier}
-          type="button"
-        >
-          {isGenerating ? "Generando..." : "Generar compras por proveedor"}
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="h-10 rounded-md border border-emerald-200 px-4 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+            disabled={isLoading || isGeneratingDelivery || lines.length === 0}
+            onClick={toggleDeliveryForm}
+            type="button"
+          >
+            Generar entrega
+          </button>
+          <button
+            className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+            disabled={isLoading || isGenerating || lines.length === 0}
+            onClick={generatePurchaseRunsBySupplier}
+            type="button"
+          >
+            {isGenerating ? "Generando..." : "Generar compras por proveedor"}
+          </button>
+        </div>
       </div>
 
       {errorMessage ? (
@@ -1165,7 +1375,103 @@ export function OrdenDetalleClient({ orderId }: OrdenDetalleClientProps) {
               })}
             </div>
           ) : null}
+          {generatedDeliveryId ? (
+            <div className="mt-2">
+              <Link
+                className="rounded-md border border-emerald-200 bg-white px-3 py-1.5 text-xs font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50"
+                href={`/dashboard/entregas/${generatedDeliveryId}`}
+              >
+                Ver entrega
+              </Link>
+            </div>
+          ) : null}
         </div>
+      ) : null}
+
+      {showDeliveryForm ? (
+        <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-stone-950">
+                Generar entrega
+              </h3>
+              <p className="mt-1 text-sm text-stone-600">
+                Crea una entrega total o selecciona partidas para una entrega parcial.
+              </p>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              <button
+                className="h-10 rounded-md bg-emerald-800 px-4 text-sm font-semibold text-white transition hover:bg-emerald-900 disabled:cursor-not-allowed disabled:bg-stone-300"
+                disabled={isGeneratingDelivery}
+                onClick={() => generateDelivery("total")}
+                type="button"
+              >
+                Entrega total
+              </button>
+              <button
+                className="h-10 rounded-md border border-emerald-200 px-4 text-sm font-semibold text-emerald-800 transition hover:border-emerald-300 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                disabled={isGeneratingDelivery}
+                onClick={() => generateDelivery("parcial")}
+                type="button"
+              >
+                Entrega parcial
+              </button>
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-lg border border-stone-200 bg-stone-50 p-4">
+            {lines.map((line) => (
+              <label
+                className="grid gap-3 rounded-md border border-stone-200 bg-white p-3 text-sm md:grid-cols-[1fr_150px]"
+                key={line.id}
+              >
+                <span className="flex items-start gap-3">
+                  <input
+                    checked={deliveryPartialLines[line.id]?.selected ?? false}
+                    className="mt-1 h-4 w-4 rounded border-stone-300 text-emerald-800 focus:ring-emerald-700"
+                    onChange={(event) =>
+                      setDeliveryPartialLines((currentLines) => ({
+                        ...currentLines,
+                        [line.id]: {
+                          deliveredQuantity:
+                            currentLines[line.id]?.deliveredQuantity ??
+                            String(toNumber(line.quantity)),
+                          selected: event.target.checked,
+                        },
+                      }))
+                    }
+                    type="checkbox"
+                  />
+                  <span>
+                    <span className="block font-semibold text-stone-950">
+                      {lineDescription(line)}
+                    </span>
+                    <span className="mt-1 block text-stone-600">
+                      {brandModelText(line.brand, line.model)} · Solicitado{" "}
+                      {toNumber(line.quantity)} {line.unit || "pieza"}
+                    </span>
+                  </span>
+                </span>
+                <input
+                  className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100"
+                  min="0"
+                  onChange={(event) =>
+                    setDeliveryPartialLines((currentLines) => ({
+                      ...currentLines,
+                      [line.id]: {
+                        deliveredQuantity: event.target.value,
+                        selected: currentLines[line.id]?.selected ?? true,
+                      },
+                    }))
+                  }
+                  step="0.01"
+                  type="number"
+                  value={deliveryPartialLines[line.id]?.deliveredQuantity ?? ""}
+                />
+              </label>
+            ))}
+          </div>
+        </section>
       ) : null}
 
       <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">

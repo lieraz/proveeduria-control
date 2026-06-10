@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { AttachmentManager } from "@/app/dashboard/attachment-manager";
 import { createClient } from "@/src/lib/supabase/client";
 
 type ProductRecord = {
@@ -1008,6 +1009,21 @@ export function ProductoDetalleClient({
           </div>
         )}
       </section>
+
+      {companyId && product ? (
+        <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 border-b border-stone-200 pb-4">
+            <h3 className="text-lg font-semibold text-stone-950">
+              Imágenes y fichas técnicas
+            </h3>
+          </div>
+          <AttachmentManager
+            companyId={companyId}
+            entityId={productId}
+            entityType="product"
+          />
+        </section>
+      ) : null}
     </div>
   );
 }

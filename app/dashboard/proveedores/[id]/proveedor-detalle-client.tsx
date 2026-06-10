@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { AttachmentManager } from "@/app/dashboard/attachment-manager";
 import { resolveCatalogProduct } from "@/src/lib/supabase/product-catalog";
 import { linkSupplierPriceToProduct } from "@/src/lib/supabase/supplier-prices";
 import { createClient } from "@/src/lib/supabase/client";
@@ -736,6 +737,21 @@ export function ProveedorDetalleClient({
           </div>
         )}
       </section>
+
+      {companyId && supplier ? (
+        <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
+          <div className="mb-5 border-b border-stone-200 pb-4">
+            <h3 className="text-lg font-semibold text-stone-950">
+              Archivos del proveedor
+            </h3>
+          </div>
+          <AttachmentManager
+            companyId={companyId}
+            entityId={supplierId}
+            entityType="supplier"
+          />
+        </section>
+      ) : null}
     </div>
   );
 }

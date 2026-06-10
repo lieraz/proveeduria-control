@@ -26,3 +26,11 @@ export const PURCHASE_RUN_LINE_STATUSES = [
   "sustituido",
   "cancelado",
 ] as const;
+
+export const DELIVERY_STATUSES = [
+  "pendiente",
+  "parcial",
+  "entregado",
+] as const;
+
+export const DELIVERY_TYPES = ["total", "parcial", "manual"] as const;
