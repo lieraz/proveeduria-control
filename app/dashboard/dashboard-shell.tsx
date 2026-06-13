@@ -11,6 +11,7 @@ import {
   ClipboardList,
   CreditCard,
   FileText,
+  GitBranch,
   LayoutDashboard,
   LogOut,
   Package,
@@ -56,6 +57,16 @@ const navigationGroups = [
       },
       { label: "Entregas", href: "/dashboard/entregas", icon: Truck },
       { label: "Facturación", href: "/dashboard/facturacion", icon: ReceiptText },
+    ],
+  },
+  {
+    label: "Reportes",
+    items: [
+      {
+        label: "Trazabilidad",
+        href: "/dashboard/reportes/trazabilidad",
+        icon: GitBranch,
+      },
     ],
   },
 ];
