@@ -1,4 +1,5 @@
 import { DashboardShell } from "../../dashboard-shell";
+import { ProcessTrace } from "../../process-trace";
 import { FacturacionDetalleClient } from "./facturacion-detalle-client";
 
 type FacturacionDetallePageProps = {
@@ -16,6 +17,7 @@ export default async function FacturacionDetallePage({
       eyebrow="Compras"
       title="Detalle de facturación"
     >
+      <ProcessTrace startingEntityId={id} startingEntityType="billing" />
       <FacturacionDetalleClient billingId={id} />
     </DashboardShell>
   );

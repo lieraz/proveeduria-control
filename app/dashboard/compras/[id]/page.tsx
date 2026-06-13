@@ -1,4 +1,5 @@
 import { DashboardShell } from "../../dashboard-shell";
+import { ProcessTrace } from "../../process-trace";
 import { CompraDetalleClient } from "./compra-detalle-client";
 
 type CompraDetallePageProps = {
@@ -14,6 +15,7 @@ export default async function CompraDetallePage({ params }: CompraDetallePagePro
       eyebrow="Compras"
       title="Detalle de compra"
     >
+      <ProcessTrace startingEntityId={id} startingEntityType="purchase_run" />
       <CompraDetalleClient purchaseRunId={id} />
     </DashboardShell>
   );

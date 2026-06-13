@@ -112,9 +112,6 @@ const emptyManualLineForm: ManualLineFormState = {
 function normalize(value: string | null | undefined) {
   return value?.toLowerCase() ?? "";
 }
-function shortId(value: string) {
-  return value.slice(0, 8);
-}
 function formatDate(value: string | null | undefined) {
   if (!value) return "Sin fecha";
   return value.replace("T", " ").slice(0, 16);
@@ -145,6 +142,35 @@ function billingSourceLabel(billing: BillingRecord) {
   if (billing.delivery_id) return "Desde entrega";
   if (billing.internal_order_id) return "Desde orden";
   return "Manual";
+}
+function deliveryOptionLabel(
+  delivery: DeliveryRecord,
+  order: InternalOrderRecord | undefined,
+  clientName: string,
+) {
+  return [
+    "Entrega",
+    order?.folio ? `Orden #${order.folio}` : "Orden sin folio",
+    clientName,
+    formatDate(delivery.delivered_at ?? delivery.scheduled_date),
+  ].join(" - ");
+}
+function selectedDeliveryLabel(
+  delivery: DeliveryRecord | null | undefined,
+  order: InternalOrderRecord | undefined,
+) {
+  if (!delivery) return "Sin selección";
+  return order?.folio
+    ? `Entrega · Orden #${order.folio}`
+    : `Entrega · ${formatDate(delivery.delivered_at ?? delivery.scheduled_date)}`;
+}
+function consolidationSourceDescription(source: ConsolidationSource) {
+  const orderText = source.orderFolio ? `Orden #${source.orderFolio}` : "Orden sin folio";
+  const dateText = source.date ? `Fecha: ${formatDate(source.date)}` : null;
+  const sourceText = source.sourceType === "delivery" ? "Entrega" : "Orden";
+  return [sourceText, orderText, source.clientName, dateText]
+    .filter(Boolean)
+    .join(" - ");
 }
 function totalsFromLines(lines: DeliveryLineRecord[], orderLinesById: Map<string, InternalOrderLineRecord>) {
   return lines.reduce(
@@ -766,9 +792,7 @@ export function FacturacionClient() {
         billing_id: billingId,
         company_id: companyId,
         delivery_id: source.sourceType === "delivery" ? source.id : null,
-        description: source.sourceType === "delivery"
-          ? `Entrega / Orden #${source.orderFolio || source.orderId || source.id.slice(0, 8)}`
-          : `Orden #${source.orderFolio || source.id.slice(0, 8)}`,
+        description: consolidationSourceDescription(source),
         internal_order_id: source.orderId,
         source_type: source.sourceType,
         subtotal: source.subtotal,
@@ -901,11 +925,11 @@ export function FacturacionClient() {
                 <option value="">Selecciona entrega</option>
                 {deliveries.map((delivery) => {
                   const order = delivery.internal_order_id ? ordersById.get(delivery.internal_order_id) : undefined;
-                  return <option key={delivery.id} value={delivery.id}>Entrega {shortId(delivery.id)} - {order?.folio ? `Orden #${order.folio}` : "Sin folio"} - {clientNameForOrder(order)}</option>;
+                  return <option key={delivery.id} value={delivery.id}>{deliveryOptionLabel(delivery, order, clientNameForOrder(order))}</option>;
                 })}
               </select>
             </div>
-            <Info label="Entrega" value={selectedDelivery ? `Entrega ${shortId(selectedDelivery.id)}` : "Sin selección"} />
+            <Info label="Entrega" value={selectedDeliveryLabel(selectedDelivery, selectedDelivery?.internal_order_id ? ordersById.get(selectedDelivery.internal_order_id) : undefined)} />
             <Info label="Orden" value={selectedDelivery?.internal_order_id ? ordersById.get(selectedDelivery.internal_order_id)?.folio ? `Orden #${ordersById.get(selectedDelivery.internal_order_id)?.folio}` : "Orden sin folio" : "Sin orden"} />
             <Info label="Entregado el" value={formatDate(selectedDelivery?.delivered_at)} />
             <Info label="Subtotal" value={formatMoney(billingSummary.subtotal)} />

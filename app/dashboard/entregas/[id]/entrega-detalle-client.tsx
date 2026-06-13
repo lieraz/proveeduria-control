@@ -679,7 +679,9 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
               <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
                 <div>
                   <div className="flex flex-wrap items-center gap-2">
-                    <h3 className="text-lg font-semibold text-stone-950">Entrega {delivery.id.slice(0, 8)}</h3>
+                    <h3 className="text-lg font-semibold text-stone-950">
+                      {order?.folio ? `Entrega · Orden #${order.folio}` : "Entrega sin orden interna"}
+                    </h3>
                     {delivery.archived_at ? <ArchiveBadge /> : null}
                   </div>
                   <p className="mt-1 text-sm text-stone-600">{order?.folio ? `Orden #${order.folio}` : "Sin orden interna"} · {clientName}</p>
@@ -735,7 +737,7 @@ export function EntregaDetalleClient({ deliveryId }: EntregaDetalleClientProps) 
               <Field id="internal_order_line_id" label="Partida de orden">
                 <select className={inputClass} id="internal_order_line_id" value={lineForm.internal_order_line_id} onChange={(event) => handleOrderLineChange(event.target.value)}>
                   <option value="">Sin partida ligada</option>
-                  {orderLines.map((line) => <option key={line.id} value={line.id}>{line.product_description || `Partida ${line.id.slice(0, 8)}`}</option>)}
+                  {orderLines.map((line) => <option key={line.id} value={line.id}>{line.product_description || "Partida sin descripción"}</option>)}
                 </select>
               </Field>
               <Field id="product_id" label="Producto">
@@ -891,7 +893,7 @@ function HeaderFormFields({ contacts, form, isSaving, orders, setForm }: { conta
   const update = (key: keyof HeaderFormState, value: string) => setForm((currentForm) => currentForm ? { ...currentForm, [key]: value } : currentForm);
   return (
     <>
-      <Field id="header_order" label="Orden interna"><select className={inputClass} disabled={isSaving} id="header_order" required value={form.internal_order_id} onChange={(event) => update("internal_order_id", event.target.value)}><option value="">Selecciona orden</option>{orders.map((order) => <option key={order.id} value={order.id}>{order.folio ? `Orden #${order.folio}` : `Orden ${order.id.slice(0, 8)}`}</option>)}</select></Field>
+      <Field id="header_order" label="Orden interna"><select className={inputClass} disabled={isSaving} id="header_order" required value={form.internal_order_id} onChange={(event) => update("internal_order_id", event.target.value)}><option value="">Selecciona orden</option>{orders.map((order) => <option key={order.id} value={order.id}>{order.folio ? `Orden #${order.folio}` : "Orden sin folio"}</option>)}</select></Field>
       <Field id="header_type" label="Tipo"><select className={inputClass} disabled={isSaving} id="header_type" value={form.delivery_type} onChange={(event) => update("delivery_type", event.target.value)}>{DELIVERY_TYPES.map((type) => <option key={type} value={type}>{type}</option>)}</select></Field>
       <Field id="header_status" label="Estado"><select className={inputClass} disabled={isSaving} id="header_status" value={form.status} onChange={(event) => update("status", event.target.value)}>{DELIVERY_STATUSES.map((status) => <option key={status} value={status}>{status}</option>)}</select></Field>
       <HeaderInput form={form} id="scheduled_date" label="Fecha programada" setForm={setForm} type="datetime-local" />

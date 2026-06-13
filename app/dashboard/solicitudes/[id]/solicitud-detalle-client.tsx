@@ -32,6 +32,7 @@ type ProductRecord = {
   id: string;
   name: string;
   brand: string | null;
+  category: string | null;
   description: string | null;
   model: string | null;
   unit: string | null;
@@ -60,6 +61,7 @@ type SupplierPriceRecord = {
 type RequestRecord = {
   id: string;
   folio: string | null;
+  client_reference_folio: string | null;
   client_id: string | null;
   contact_ref_id: string | null;
   requested_at: string | null;
@@ -278,6 +280,26 @@ function brandModelText(
   return [brand, model].filter(Boolean).join(" / ") || "Sin marca/modelo";
 }
 
+function productOptionLabel(product: ProductRecord) {
+  const details = [
+    product.brand,
+    product.model,
+    product.category,
+    product.unit,
+  ].filter(Boolean);
+
+  return details.length > 0
+    ? `${product.name} - ${details.join(" - ")}`
+    : product.name;
+}
+
+function normalizeSearch(value: string | null | undefined) {
+  return (value ?? "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "");
+}
+
 export function SolicitudDetalleClient({
   requestId,
 }: SolicitudDetalleClientProps) {
@@ -293,6 +315,10 @@ export function SolicitudDetalleClient({
   const [form, setForm] = useState<LineFormState>(emptyLineForm);
   const [offerForm, setOfferForm] = useState<OfferFormState>(emptyOfferForm);
   const [offerFormLineId, setOfferFormLineId] = useState<string | null>(null);
+  const [offerProductSearch, setOfferProductSearch] = useState("");
+  const [selectedOfferProductId, setSelectedOfferProductId] = useState("");
+  const [supplierDescriptionWasEdited, setSupplierDescriptionWasEdited] =
+    useState(false);
   const [quickSupplierForm, setQuickSupplierForm] =
     useState<QuickSupplierFormState>(emptyQuickSupplierForm);
   const [quickSupplierLineId, setQuickSupplierLineId] = useState<string | null>(
@@ -364,6 +390,35 @@ export function SolicitudDetalleClient({
 
     return nextOffersByLineId;
   }, [offers]);
+  const filteredOfferProducts = useMemo(() => {
+    const searchValue = normalizeSearch(offerProductSearch.trim());
+    const selectedProduct = selectedOfferProductId
+      ? products.find((product) => product.id === selectedOfferProductId)
+      : undefined;
+
+    if (!searchValue) {
+      return products;
+    }
+
+    const matchingProducts = products.filter((product) =>
+      [
+        product.name,
+        product.brand,
+        product.model,
+        product.category,
+        product.description,
+      ].some((value) => normalizeSearch(value).includes(searchValue)),
+    );
+
+    if (
+      selectedProduct &&
+      !matchingProducts.some((product) => product.id === selectedProduct.id)
+    ) {
+      return [selectedProduct, ...matchingProducts];
+    }
+
+    return matchingProducts;
+  }, [offerProductSearch, products, selectedOfferProductId]);
 
   const loadSuppliers = useCallback(
     async (activeCompanyId: string) => {
@@ -509,7 +564,7 @@ export function SolicitudDetalleClient({
       const { data: requestData, error: requestError } = await supabase
         .from("client_requests")
         .select(
-          "id,folio,client_id,contact_ref_id,requested_at,requested_by,channel,description,urgency,status,notes",
+          "id,folio,client_reference_folio,client_id,contact_ref_id,requested_at,requested_by,channel,description,urgency,status,notes",
         )
         .eq("company_id", activeCompanyId)
         .eq("id", requestId)
@@ -522,7 +577,7 @@ export function SolicitudDetalleClient({
       }
 
       if (!requestData) {
-        setErrorMessage("No se encontró la solicitud.");
+        setErrorMessage("No se encontró el requerimiento.");
         setIsLoading(false);
         return;
       }
@@ -543,7 +598,7 @@ export function SolicitudDetalleClient({
             .eq("active", true),
           supabase
             .from("products")
-            .select("id,name,brand,description,model,unit")
+            .select("id,name,brand,category,description,model,unit")
             .eq("company_id", activeCompanyId)
             .eq("active", true)
             .order("name", { ascending: true }),
@@ -623,6 +678,40 @@ export function SolicitudDetalleClient({
     ].join(" - ");
   }
 
+  function supplierNameForId(supplierId: string | null | undefined) {
+    return supplierId
+      ? suppliersById.get(supplierId)?.name ?? "Proveedor no especificado"
+      : "Proveedor no especificado";
+  }
+
+  function requestFolioText() {
+    return request?.folio ? `Requerimiento #${request.folio}` : "Requerimiento sin folio";
+  }
+
+  function requestClientReferenceText() {
+    return request?.client_reference_folio
+      ? `Folio cliente: ${request.client_reference_folio}.`
+      : null;
+  }
+
+  function generatedOfferNotes(
+    offer: SupplierOfferRecord,
+    line: ClientRequestLineRecord,
+  ) {
+    return [
+      `Generada desde oferta de proveedor: ${supplierNameForId(offer.supplier_id)}.`,
+      `${requestFolioText()}.`,
+      requestClientReferenceText(),
+      `Partida: ${lineDescription(line) || "Partida sin descripción"}.`,
+      offer.lead_time_days
+        ? `Tiempo de entrega: ${offer.lead_time_days} días.`
+        : null,
+      offer.notes ? `Notas oferta: ${offer.notes}` : null,
+    ]
+      .filter(Boolean)
+      .join(" ");
+  }
+
   async function handleSupplierPriceChange(
     line: ClientRequestLineRecord,
     supplierPriceId: string,
@@ -636,6 +725,9 @@ export function SolicitudDetalleClient({
     }
 
     const quotedAt = formatDate(selectedPrice.quoted_at);
+    const supplierName = supplierNameForId(offerForm.supplier_id);
+    const historicalDescription =
+      supplierPriceDescription(selectedPrice) || "Producto sin descripción";
     setOfferForm((currentForm) => ({
       ...currentForm,
       brand:
@@ -648,7 +740,7 @@ export function SolicitudDetalleClient({
         selectedPrice.model ||
         selectedPrice.products?.[0]?.model ||
         "",
-      notes: `Basado en precio histórico del ${quotedAt}`,
+      notes: `Basado en precio histórico de ${supplierName}. Producto: ${historicalDescription}. Fecha: ${quotedAt}.`,
       supplier_description: supplierPriceDescription(selectedPrice),
       unit_price:
         selectedPrice.cost === null || selectedPrice.cost === undefined
@@ -727,6 +819,70 @@ export function SolicitudDetalleClient({
           ? selectedProduct.unit
           : currentForm.unit,
     }));
+  }
+
+  function handleOfferProductChange(productId: string) {
+    const selectedProduct = productsById.get(productId);
+
+    setSelectedOfferProductId(productId);
+
+    if (!selectedProduct) {
+      return;
+    }
+
+    setOfferForm((currentForm) => ({
+      ...currentForm,
+      brand: selectedProduct.brand ?? currentForm.brand,
+      model: selectedProduct.model ?? currentForm.model,
+      supplier_description:
+        supplierDescriptionWasEdited && currentForm.supplier_description.trim()
+          ? currentForm.supplier_description
+          : selectedProduct.name,
+    }));
+  }
+
+  async function linkLineProductIfNeeded(
+    line: ClientRequestLineRecord,
+    productId: string | null,
+  ) {
+    if (!companyId || !productId || line.product_id) {
+      return true;
+    }
+
+    const selectedProduct = productsById.get(productId);
+    const nextLineBrand = line.brand || selectedProduct?.brand || null;
+    const nextLineModel = line.model || selectedProduct?.model || null;
+
+    const { error } = await supabase
+      .from("client_request_lines")
+      .update({
+        brand: nextLineBrand,
+        model: nextLineModel,
+        product_id: productId,
+      })
+      .eq("id", line.id)
+      .eq("company_id", companyId)
+      .is("product_id", null);
+
+    if (error) {
+      setErrorMessage(error.message);
+      return false;
+    }
+
+    setLines((currentLines) =>
+      currentLines.map((currentLine) =>
+        currentLine.id === line.id
+          ? {
+              ...currentLine,
+              brand: nextLineBrand,
+              model: nextLineModel,
+              product_id: productId,
+            }
+          : currentLine,
+      ),
+    );
+
+    return true;
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -897,6 +1053,9 @@ export function SolicitudDetalleClient({
     setEditingOfferId(null);
     setOfferFormLineId(line.id);
     cancelQuickSupplier();
+    setOfferProductSearch("");
+    setSelectedOfferProductId(line.product_id ?? "");
+    setSupplierDescriptionWasEdited(false);
     setSelectedSupplierPriceId("");
     setSupplierPrices([]);
     setIsLoadingSupplierPrices(false);
@@ -912,6 +1071,9 @@ export function SolicitudDetalleClient({
 
   function startEditingOffer(offer: SupplierOfferRecord) {
     const supplierId = offer.supplier_id ?? "";
+    const offerLine = lines.find(
+      (line) => line.id === offer.client_request_line_id,
+    );
 
     setEditingLineId(null);
     setExpandedLineId(offer.client_request_line_id);
@@ -919,6 +1081,9 @@ export function SolicitudDetalleClient({
     setEditingOfferId(offer.id);
     setOfferFormLineId(offer.client_request_line_id);
     cancelQuickSupplier();
+    setOfferProductSearch("");
+    setSelectedOfferProductId(offerLine?.product_id ?? "");
+    setSupplierDescriptionWasEdited(false);
     setSelectedSupplierPriceId("");
     setSupplierPrices([]);
     setOfferForm({
@@ -954,6 +1119,9 @@ export function SolicitudDetalleClient({
     setEditingOfferId(null);
     setOfferFormLineId(null);
     setOfferForm(emptyOfferForm);
+    setOfferProductSearch("");
+    setSelectedOfferProductId("");
+    setSupplierDescriptionWasEdited(false);
     setSelectedSupplierPriceId("");
     setSupplierPrices([]);
     setIsLoadingSupplierPrices(false);
@@ -1059,17 +1227,36 @@ export function SolicitudDetalleClient({
     setIsSavingOffer(true);
     setErrorMessage("");
 
+    const selectedProductId = cleanOptionalValue(selectedOfferProductId);
+    const selectedProduct = selectedProductId
+      ? productsById.get(selectedProductId)
+      : undefined;
+    const lineWasLinked = await linkLineProductIfNeeded(
+      line,
+      selectedProductId,
+    );
+
+    if (!lineWasLinked) {
+      setIsSavingOffer(false);
+      return;
+    }
+
     const payload: SupplierOfferInsert = {
-      brand: cleanOptionalValue(offerForm.brand),
+      brand:
+        cleanOptionalValue(offerForm.brand) ?? selectedProduct?.brand ?? null,
       client_request_line_id: line.id,
       company_id: companyId,
       currency: cleanOptionalValue(offerForm.currency)?.toUpperCase() ?? "MXN",
       is_selected: false,
       lead_time_days: optionalNumber(offerForm.lead_time_days),
       minimum_order_quantity: optionalNumber(offerForm.minimum_order_quantity),
-      model: cleanOptionalValue(offerForm.model),
+      model:
+        cleanOptionalValue(offerForm.model) ?? selectedProduct?.model ?? null,
       notes: cleanOptionalValue(offerForm.notes),
-      supplier_description: cleanOptionalValue(offerForm.supplier_description),
+      supplier_description:
+        cleanOptionalValue(offerForm.supplier_description) ??
+        selectedProduct?.name ??
+        null,
       supplier_id: supplierId,
       unit_price: unitPrice,
       valid_until: cleanOptionalValue(offerForm.valid_until),
@@ -1200,17 +1387,17 @@ export function SolicitudDetalleClient({
     }
 
     if (!request) {
-      setErrorMessage("No se encontró la solicitud.");
+      setErrorMessage("No se encontró el requerimiento.");
       return;
     }
 
     if (!request.client_id) {
-      setErrorMessage("La solicitud no tiene cliente asignado.");
+      setErrorMessage("El requerimiento no tiene cliente asignado.");
       return;
     }
 
     if (lines.length === 0) {
-      setErrorMessage("La solicitud no tiene partidas para cotizar.");
+      setErrorMessage("El requerimiento no tiene partidas para cotizar.");
       return;
     }
 
@@ -1274,15 +1461,7 @@ export function SolicitudDetalleClient({
         supplierCost / (1 - parsedTargetMargin),
       );
       const finalUnitPrice = suggestedPrice;
-      const notes = [
-        `Generada desde oferta proveedor ${selectedOffer.id}.`,
-        selectedOffer.lead_time_days
-          ? `Tiempo de entrega: ${selectedOffer.lead_time_days} días.`
-          : null,
-        selectedOffer.notes ? `Notas oferta: ${selectedOffer.notes}` : null,
-      ]
-        .filter(Boolean)
-        .join(" ");
+      const notes = generatedOfferNotes(selectedOffer, line);
 
       return {
         brand: selectedOffer.brand || line.brand,
@@ -1308,9 +1487,10 @@ export function SolicitudDetalleClient({
       const currentDate = new Date();
       const validUntil = addDays(currentDate, 15);
       const notes = [
-        `Cotización generada desde solicitud ${request.folio || request.id}.`,
+        `Cotización generada desde ${requestFolioText()}.`,
+        requestClientReferenceText(),
         request.description ? `Descripción: ${request.description}` : null,
-        request.notes ? `Notas solicitud: ${request.notes}` : null,
+        request.notes ? `Notas requerimiento: ${request.notes}` : null,
       ]
         .filter(Boolean)
         .join("\n");
@@ -1386,7 +1566,7 @@ export function SolicitudDetalleClient({
         className="text-sm font-medium text-emerald-800 hover:text-emerald-950 hover:underline"
         href="/dashboard/solicitudes"
       >
-        Volver a solicitudes
+        Volver a requerimientos
       </Link>
 
       {errorMessage ? (
@@ -1410,18 +1590,28 @@ export function SolicitudDetalleClient({
       <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
         {isLoading || !request ? (
           <p className="text-sm font-medium text-stone-600">
-            Cargando solicitud...
+            Cargando requerimiento...
           </p>
         ) : (
           <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-6">
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
-                Folio
+                Folio interno
               </p>
               <p className="mt-1 text-base font-semibold text-stone-950">
-                {request.folio || "Sin folio"}
+                {request.folio ? `#${request.folio}` : "Sin folio"}
               </p>
             </div>
+            {request.client_reference_folio ? (
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
+                  Folio del cliente
+                </p>
+                <p className="mt-1 text-base font-semibold text-stone-950">
+                  {request.client_reference_folio}
+                </p>
+              </div>
+            ) : null}
             <div>
               <p className="text-xs font-semibold uppercase tracking-wide text-stone-500">
                 Cliente
@@ -1828,7 +2018,7 @@ export function SolicitudDetalleClient({
           </div>
         ) : lines.length === 0 ? (
           <div className="p-5 text-sm text-stone-600">
-            Esta solicitud todavía no tiene partidas.
+            Este requerimiento todavía no tiene partidas.
           </div>
         ) : (
           <div className="grid gap-3 p-5">
@@ -2222,7 +2412,6 @@ export function SolicitudDetalleClient({
                                               }),
                                             )
                                           }
-                                          required
                                           type="text"
                                           value={quickSupplierForm.name}
                                         />
@@ -2391,6 +2580,63 @@ export function SolicitudDetalleClient({
                                       ) : null}
                                     </div>
                                   ) : null}
+
+                                  <div className="grid gap-3 md:grid-cols-2">
+                                    <div className="space-y-2">
+                                      <label
+                                        className="text-sm font-medium text-stone-800"
+                                        htmlFor={`offer_product_search_${line.id}`}
+                                      >
+                                        Buscar producto de catálogo
+                                      </label>
+                                      <input
+                                        className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                        disabled={isSavingOffer}
+                                        id={`offer_product_search_${line.id}`}
+                                        onChange={(event) =>
+                                          setOfferProductSearch(
+                                            event.target.value,
+                                          )
+                                        }
+                                        placeholder="Nombre, marca, modelo, categoría o descripción"
+                                        type="search"
+                                        value={offerProductSearch}
+                                      />
+                                    </div>
+                                    <div className="space-y-2">
+                                      <label
+                                        className="text-sm font-medium text-stone-800"
+                                        htmlFor={`offer_product_id_${line.id}`}
+                                      >
+                                        Producto existente
+                                      </label>
+                                      <select
+                                        className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+                                        disabled={isSavingOffer}
+                                        id={`offer_product_id_${line.id}`}
+                                        onChange={(event) =>
+                                          handleOfferProductChange(
+                                            event.target.value,
+                                          )
+                                        }
+                                        value={selectedOfferProductId}
+                                      >
+                                        <option value="">
+                                          Sin producto de catálogo
+                                        </option>
+                                        {filteredOfferProducts.map(
+                                          (product) => (
+                                            <option
+                                              key={product.id}
+                                              value={product.id}
+                                            >
+                                              {productOptionLabel(product)}
+                                            </option>
+                                          ),
+                                        )}
+                                      </select>
+                                    </div>
+                                  </div>
                                 </div>
 
                                 <div className="space-y-2 lg:col-span-3">
@@ -2404,13 +2650,14 @@ export function SolicitudDetalleClient({
                                     className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
                                     disabled={isSavingOffer}
                                     id={`supplier_description_${line.id}`}
-                                    onChange={(event) =>
+                                    onChange={(event) => {
+                                      setSupplierDescriptionWasEdited(true);
                                       setOfferForm((currentForm) => ({
                                         ...currentForm,
                                         supplier_description:
                                           event.target.value,
-                                      }))
-                                    }
+                                      }));
+                                    }}
                                     value={offerForm.supplier_description}
                                   />
 	                                </div>
@@ -2605,7 +2852,7 @@ export function SolicitudDetalleClient({
         <section className="rounded-lg border border-stone-200 bg-white p-5 shadow-sm">
           <div className="mb-5 border-b border-stone-200 pb-4">
             <h3 className="text-lg font-semibold text-stone-950">
-              Archivos de solicitud
+              Archivos de requerimiento
             </h3>
           </div>
           <AttachmentManager

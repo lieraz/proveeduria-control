@@ -109,9 +109,6 @@ function formatDate(value: string | null | undefined) {
 function normalize(value: string | null | undefined) {
   return value?.toLowerCase() ?? "";
 }
-function shortId(value: string) {
-  return value.slice(0, 8);
-}
 function relatedOne<T>(value: T | T[] | null | undefined) {
   return Array.isArray(value) ? value[0] ?? null : value ?? null;
 }
@@ -557,7 +554,7 @@ export function EntregasClient() {
             <Field id="internal_order_id" label="Orden interna">
               <select className={inputClass} id="internal_order_id" required value={form.internal_order_id} onChange={(event) => handleOrderChange(event.target.value)}>
                 <option value="">Selecciona orden</option>
-                {orders.map((order) => <option key={order.id} value={order.id}>{order.folio ? `Orden #${order.folio}` : `Orden ${order.id.slice(0, 8)}`} - {clientNameForOrder(order)}</option>)}
+                {orders.map((order) => <option key={order.id} value={order.id}>{order.folio ? `Orden #${order.folio}` : "Orden sin folio"} - {clientNameForOrder(order)}</option>)}
               </select>
             </Field>
             <Field id="delivery_type" label="Tipo de entrega">
@@ -593,7 +590,7 @@ export function EntregasClient() {
                     <span className="flex items-start gap-3">
                       <input className="mt-1 h-4 w-4 rounded border-stone-300 text-emerald-800 focus:ring-emerald-700" checked={partialLines[line.id]?.selected ?? false} onChange={(event) => setPartialLines((current) => ({ ...current, [line.id]: { deliveredQuantity: current[line.id]?.deliveredQuantity ?? String(toNumber(line.quantity)), selected: event.target.checked } }))} type="checkbox" />
                       <span>
-                        <span className="block font-semibold text-stone-950">{line.product_description || `Partida ${line.id.slice(0, 8)}`}</span>
+                        <span className="block font-semibold text-stone-950">{line.product_description || "Partida sin descripción"}</span>
                         <span className="mt-1 block text-stone-600">{[line.brand, line.model].filter(Boolean).join(" / ") || "Sin marca/modelo"} · Solicitado {toNumber(line.quantity)} {line.unit || "pieza"}</span>
                       </span>
                     </span>
@@ -660,7 +657,6 @@ export function EntregasClient() {
                       <td className="px-5 py-4"><input checked={selectedDeliveryIds.has(delivery.id)} onChange={() => toggleDeliverySelection(delivery.id)} type="checkbox" /></td>
                       <td className="px-5 py-4 font-semibold text-stone-950">
                         <Link className="text-emerald-800 hover:underline" href={`/dashboard/entregas/${delivery.id}`}>{deliveryTitle(delivery, ordersById)}</Link>
-                        <span className="mt-1 block text-xs font-medium text-stone-500">ID corto: {shortId(delivery.id)}</span>
                         {delivery.archived_at ? <span className="mt-2 block"><ArchiveBadge /></span> : null}
                       </td>
                       <td className="px-5 py-4">{orderFolioLabel(delivery, ordersById)}</td>

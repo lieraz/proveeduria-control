@@ -27,7 +27,7 @@ const navigationGroups = [
     label: "Operación",
     items: [
       { label: "Panel", href: "/dashboard", icon: LayoutDashboard },
-      { label: "Solicitudes", href: "/dashboard/solicitudes", icon: ClipboardList },
+      { label: "Requerimientos", href: "/dashboard/solicitudes", icon: ClipboardList },
     ],
   },
   {
@@ -71,7 +71,7 @@ type DashboardShellProps = {
 export function DashboardShell({
   actions,
   children,
-  description = "Vista inicial para coordinar solicitudes, cotizaciones, compras, entregas y facturación del equipo interno.",
+  description = "Vista inicial para coordinar requerimientos, cotizaciones, compras, entregas y facturación del equipo interno.",
   eyebrow = "Panel principal",
   title = "Control Proveeduría",
 }: DashboardShellProps) {
@@ -233,7 +233,7 @@ export function DashboardShell({
             {children ?? (
               <div className="grid gap-4 md:grid-cols-3">
                 {[
-                  ["Solicitudes abiertas", "Pendientes de revisar"],
+                  ["Requerimientos abiertos", "Pendientes de revisar"],
                   ["Cotizaciones", "En preparación"],
                   ["Entregas", "Seguimiento operativo"],
                 ].map(([title, description]) => (

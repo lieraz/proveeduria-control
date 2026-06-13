@@ -1,4 +1,5 @@
 import { DashboardShell } from "../../dashboard-shell";
+import { ProcessTrace } from "../../process-trace";
 import { SolicitudDetalleClient } from "./solicitud-detalle-client";
 
 type SolicitudDetallePageProps = {
@@ -12,10 +13,11 @@ export default async function SolicitudDetallePage({
 
   return (
     <DashboardShell
-      description="Revisa la solicitud del cliente y administra las partidas solicitadas antes de preparar cotizaciones."
+      description="Revisa el requerimiento del cliente y administra las partidas solicitadas antes de preparar cotizaciones."
       eyebrow="Comercial"
-      title="Detalle de solicitud"
+      title="Requerimiento"
     >
+      <ProcessTrace startingEntityId={id} startingEntityType="client_request" />
       <SolicitudDetalleClient requestId={id} />
     </DashboardShell>
   );

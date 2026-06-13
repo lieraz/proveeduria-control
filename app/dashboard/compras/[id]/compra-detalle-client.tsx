@@ -792,7 +792,7 @@ export function CompraDetalleClient({ purchaseRunId }: CompraDetalleClientProps)
             <Field id="internal_order_line_id" label="Partida de orden">
               <select className={inputClass} id="internal_order_line_id" value={lineForm.internal_order_line_id} onChange={(event) => handleOrderLineChange(event.target.value)}>
                 <option value="">Sin partida ligada</option>
-                {orderLines.map((line) => <option key={line.id} value={line.id}>{line.product_description || `Partida ${line.id.slice(0, 8)}`}</option>)}
+                {orderLines.map((line) => <option key={line.id} value={line.id}>{line.product_description || "Partida sin descripción"}</option>)}
               </select>
             </Field>
             <Field id="product_id" label="Producto">
@@ -1006,7 +1006,7 @@ function HeaderFormFields({ form, isSaving, orders, paymentMethods, setForm, sup
   const update = (key: keyof HeaderFormState, value: string) => setForm((currentForm) => currentForm ? { ...currentForm, [key]: value } : currentForm);
   return (
     <>
-      <Field id="header_order" label="Orden interna"><select className={inputClass} disabled={isSaving} id="header_order" value={form.internal_order_id} onChange={(event) => update("internal_order_id", event.target.value)}><option value="">Sin orden</option>{orders.map((order) => <option key={order.id} value={order.id}>{order.folio ? `Orden #${order.folio}` : `Orden ${order.id.slice(0, 8)}`}</option>)}</select></Field>
+      <Field id="header_order" label="Orden interna"><select className={inputClass} disabled={isSaving} id="header_order" value={form.internal_order_id} onChange={(event) => update("internal_order_id", event.target.value)}><option value="">Sin orden</option>{orders.map((order) => <option key={order.id} value={order.id}>{order.folio ? `Orden #${order.folio}` : "Orden sin folio"}</option>)}</select></Field>
       <Field id="header_supplier" label="Proveedor"><select className={inputClass} disabled={isSaving} id="header_supplier" required value={form.supplier_id} onChange={(event) => update("supplier_id", event.target.value)}><option value="">Selecciona proveedor</option>{suppliers.map((supplier) => <option key={supplier.id} value={supplier.id}>{supplier.name ?? "Proveedor sin nombre"}</option>)}</select></Field>
       <Field id="header_method" label="Tipo"><select className={inputClass} disabled={isSaving} id="header_method" value={form.purchase_method} onChange={(event) => update("purchase_method", event.target.value)}>{purchaseMethods.map((method) => <option key={method.value} value={method.value}>{method.label}</option>)}</select></Field>
       {(["assigned_to", "pickup_address", "scheduled_at", "picked_up_at", "delivered_to_office_at", "marketplace_order_number", "tracking_number", "estimated_delivery_at", "delivered_at"] as const).map((key) => <HeaderInput form={form} id={key} key={key} label={headerLabel(key)} setForm={setForm} type={key.endsWith("_at") ? "datetime-local" : "text"} />)}

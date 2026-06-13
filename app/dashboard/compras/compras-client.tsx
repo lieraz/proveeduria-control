@@ -616,7 +616,7 @@ export function ComprasClient() {
               <select className={inputClass} id="internal_order_id" value={form.internal_order_id} onChange={(event) => setForm({ ...form, internal_order_id: event.target.value })}>
                 <option value="">Sin orden interna</option>
                 {orders.map((order) => (
-                  <option key={order.id} value={order.id}>{order.folio ? `Orden #${order.folio}` : `Orden ${order.id.slice(0, 8)}`}</option>
+                  <option key={order.id} value={order.id}>{order.folio ? `Orden #${order.folio}` : "Orden sin folio"}</option>
                 ))}
               </select>
             </Field>

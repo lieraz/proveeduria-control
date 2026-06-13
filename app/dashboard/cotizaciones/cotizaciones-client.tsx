@@ -822,7 +822,7 @@ export function CotizacionesClient() {
               className="text-sm font-medium text-stone-800"
               htmlFor="request_id"
             >
-              Solicitud relacionada
+              Requerimiento relacionado
             </label>
             <select
               className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
@@ -831,7 +831,7 @@ export function CotizacionesClient() {
               onChange={(event) => handleRequestChange(event.target.value)}
               value={form.request_id}
             >
-              <option value="">Sin solicitud</option>
+              <option value="">Sin requerimiento</option>
               {requests.map((request) => (
                 <option key={request.id} value={request.id}>
                   {requestLabel(request)}

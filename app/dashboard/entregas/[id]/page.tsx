@@ -1,4 +1,5 @@
 import { DashboardShell } from "../../dashboard-shell";
+import { ProcessTrace } from "../../process-trace";
 import { EntregaDetalleClient } from "./entrega-detalle-client";
 
 type EntregaDetallePageProps = {
@@ -16,6 +17,7 @@ export default async function EntregaDetallePage({
       eyebrow="Operación"
       title="Detalle de entrega"
     >
+      <ProcessTrace startingEntityId={id} startingEntityType="delivery" />
       <EntregaDetalleClient deliveryId={id} />
     </DashboardShell>
   );

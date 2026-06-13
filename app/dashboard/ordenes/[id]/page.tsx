@@ -1,4 +1,5 @@
 import { DashboardShell } from "../../dashboard-shell";
+import { ProcessTrace } from "../../process-trace";
 import { OrdenDetalleClient } from "./orden-detalle-client";
 
 type OrdenDetallePageProps = {
@@ -14,6 +15,7 @@ export default async function OrdenDetallePage({ params }: OrdenDetallePageProps
       eyebrow="Operación"
       title="Detalle de orden"
     >
+      <ProcessTrace startingEntityId={id} startingEntityType="internal_order" />
       <OrdenDetalleClient orderId={id} />
     </DashboardShell>
   );

@@ -29,6 +29,7 @@ type ContactRecord = {
 type RequestRecord = {
   id: string;
   folio: string | null;
+  client_reference_folio: string | null;
   client_id: string | null;
   contact_ref_id: string | null;
   requested_at: string | null;
@@ -44,6 +45,7 @@ type RequestRecord = {
 };
 
 type RequestFormState = {
+  client_reference_folio: string;
   client_id: string;
   contact_ref_id: string;
   requested_at: string;
@@ -76,6 +78,7 @@ function todayDate() {
 
 function emptyForm(): RequestFormState {
   return {
+    client_reference_folio: "",
     client_id: "",
     contact_ref_id: "",
     requested_at: todayDate(),
@@ -91,6 +94,20 @@ function emptyForm(): RequestFormState {
 function cleanOptionalValue(value: string) {
   const trimmedValue = value.trim();
   return trimmedValue.length > 0 ? trimmedValue : null;
+}
+
+function requestErrorMessage(error: { code?: string; message: string }) {
+  const normalizedMessage = error.message.toLowerCase();
+
+  if (
+    error.code === "23505" ||
+    normalizedMessage.includes("duplicate key") ||
+    normalizedMessage.includes("unique constraint")
+  ) {
+    return "Este folio del cliente ya existe para este cliente.";
+  }
+
+  return error.message;
 }
 
 function formatDate(value: string | null) {
@@ -156,6 +173,7 @@ function requestMatchesSearch(
 
   return [
     request.folio,
+    request.client_reference_folio,
     clientName,
     request.requested_by,
     request.description,
@@ -267,7 +285,7 @@ export function SolicitudesClient() {
       let query = supabase
         .from("client_requests")
         .select(
-          "id,folio,client_id,contact_ref_id,requested_at,requested_by,channel,description,urgency,status,notes,archived_at,archived_by,archive_reason",
+          "id,folio,client_reference_folio,client_id,contact_ref_id,requested_at,requested_by,channel,description,urgency,status,notes,archived_at,archived_by,archive_reason",
         )
         .eq("company_id", activeCompanyId)
         .order("requested_at", { ascending: false });
@@ -453,15 +471,17 @@ export function SolicitudesClient() {
     }
 
     if (!form.requested_at) {
-      setErrorMessage("La fecha de solicitud es obligatoria.");
+      setErrorMessage("La fecha de requerimiento es obligatoria.");
       return;
     }
 
     setIsSaving(true);
     setErrorMessage("");
     setSuccessMessage("");
+    const isEditingRequest = Boolean(editingRequestId);
 
     const payload = {
+      client_reference_folio: cleanOptionalValue(form.client_reference_folio),
       client_id: form.client_id,
       contact_ref_id: cleanOptionalValue(form.contact_ref_id),
       requested_at: form.requested_at,
@@ -486,7 +506,7 @@ export function SolicitudesClient() {
     setIsSaving(false);
 
     if (error) {
-      setErrorMessage(error.message);
+      setErrorMessage(requestErrorMessage(error));
       return;
     }
 
@@ -495,6 +515,11 @@ export function SolicitudesClient() {
     setShowCreateForm(false);
     setForm(emptyForm());
     await loadRequests(companyId, search, clientsById, archiveFilter);
+    setSuccessMessage(
+      isEditingRequest
+        ? "Requerimiento actualizado correctamente."
+        : "Requerimiento creado correctamente.",
+    );
   }
 
   function toggleRequestSelection(requestId: string) {
@@ -529,6 +554,7 @@ export function SolicitudesClient() {
     setEditingFolio(request.folio);
     setShowCreateForm(false);
     setForm({
+      client_reference_folio: request.client_reference_folio ?? "",
       client_id: request.client_id ?? "",
       contact_ref_id: request.contact_ref_id ?? "",
       requested_at: formatDate(request.requested_at),
@@ -703,7 +729,7 @@ export function SolicitudesClient() {
     }
 
     setSelectedRequestIds(new Set());
-    setSuccessMessage("Solicitudes archivadas correctamente.");
+    setSuccessMessage("Requerimientos archivados correctamente.");
     await loadRequests(companyId, search, clientsById, archiveFilter);
   }
 
@@ -742,7 +768,7 @@ export function SolicitudesClient() {
     }
 
     setSelectedRequestIds(new Set());
-    setSuccessMessage("Solicitudes restauradas correctamente.");
+    setSuccessMessage("Requerimientos restaurados correctamente.");
     await loadRequests(companyId, search, clientsById, archiveFilter);
   }
 
@@ -752,10 +778,10 @@ export function SolicitudesClient() {
         <div className={`${editingRequestId || showCreateForm ? "mb-5" : ""} flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between`}>
           <div>
             <h3 className="text-lg font-semibold text-stone-950">
-              {editingRequestId ? "Editar solicitud" : "Nueva solicitud"}
+              {editingRequestId ? "Editar requerimiento" : "Nuevo requerimiento"}
             </h3>
             <p className="mt-1 text-sm text-stone-600">
-              Las solicitudes se guardan automáticamente en la empresa de tu
+              Los requerimientos se guardan automáticamente en la empresa de tu
               perfil.
             </p>
           </div>
@@ -775,7 +801,7 @@ export function SolicitudesClient() {
               onClick={toggleCreateForm}
               type="button"
             >
-              {showCreateForm ? "Ocultar formulario" : "Nueva solicitud"}
+              {showCreateForm ? "Ocultar formulario" : "Nuevo requerimiento"}
             </button>
           )}
         </div>
@@ -784,12 +810,12 @@ export function SolicitudesClient() {
           <form className="grid gap-4 rounded-lg border border-stone-200 p-4 lg:grid-cols-2" onSubmit={handleSubmit}>
           <div className="lg:col-span-2">
             <h4 className="text-base font-semibold text-stone-950">
-              {editingRequestId ? "Editar solicitud" : "Nuevo registro"}
+              Datos del requerimiento
             </h4>
           </div>
           <div className="space-y-2">
             <label className="text-sm font-medium text-stone-800" htmlFor="folio">
-              Folio
+              Folio interno
             </label>
             <input
               className="h-11 w-full rounded-md border border-stone-300 bg-stone-100 px-3 text-sm text-stone-600 outline-none disabled:cursor-not-allowed"
@@ -805,9 +831,32 @@ export function SolicitudesClient() {
           <div className="space-y-2">
             <label
               className="text-sm font-medium text-stone-800"
+              htmlFor="client_reference_folio"
+            >
+              Folio del cliente
+            </label>
+            <input
+              className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
+              disabled={isLoading || isSaving}
+              id="client_reference_folio"
+              name="client_reference_folio"
+              onChange={(event) =>
+                setForm((currentForm) => ({
+                  ...currentForm,
+                  client_reference_folio: event.target.value,
+                }))
+              }
+              type="text"
+              value={form.client_reference_folio}
+            />
+          </div>
+
+          <div className="space-y-2">
+            <label
+              className="text-sm font-medium text-stone-800"
               htmlFor="requested_at"
             >
-              Fecha de solicitud
+              Fecha de requerimiento
             </label>
             <input
               className="h-11 w-full rounded-md border border-stone-300 bg-white px-3 text-sm text-stone-950 outline-none transition focus:border-emerald-700 focus:ring-2 focus:ring-emerald-100 disabled:cursor-not-allowed disabled:bg-stone-100"
@@ -1047,7 +1096,7 @@ export function SolicitudesClient() {
                 ? "Guardando..."
                 : editingRequestId
                   ? "Guardar cambios"
-                  : "Crear solicitud"}
+                  : "Crear requerimiento"}
             </button>
             {!editingRequestId ? (
               <button
@@ -1069,10 +1118,11 @@ export function SolicitudesClient() {
           <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
             <div>
               <h3 className="text-lg font-semibold text-stone-950">
-                Solicitudes registradas
+                Requerimientos registrados
               </h3>
               <p className="mt-1 text-sm text-stone-600">
-                Busca por folio, cliente, solicitante, descripción o estado.
+                Busca por folio interno, folio del cliente, cliente,
+                solicitante, descripción o estado.
               </p>
               <div className="mt-3">
                 <ArchiveFilterToggle
@@ -1085,7 +1135,7 @@ export function SolicitudesClient() {
 
             <form className="flex flex-col gap-2 sm:flex-row" onSubmit={handleSearch}>
               <label className="sr-only" htmlFor="request-search">
-                Buscar solicitud
+                Buscar requerimiento
               </label>
               <div className="relative">
                 <Search
@@ -1097,7 +1147,7 @@ export function SolicitudesClient() {
                   disabled={isLoading || isSearching}
                   id="request-search"
                   onChange={(event) => setSearch(event.target.value)}
-                  placeholder="Buscar solicitudes"
+                  placeholder="Buscar requerimientos"
                   type="search"
                   value={search}
                 />
@@ -1136,11 +1186,11 @@ export function SolicitudesClient() {
 
         {isLoading ? (
           <div className="p-5 text-sm font-medium text-stone-600">
-            Cargando solicitudes...
+            Cargando requerimientos...
           </div>
         ) : requests.length === 0 ? (
           <div className="p-5 text-sm text-stone-600">
-            No hay solicitudes para mostrar.
+            No hay requerimientos para mostrar.
           </div>
         ) : (
           <div className="overflow-x-auto">
@@ -1149,14 +1199,14 @@ export function SolicitudesClient() {
                 <tr>
                   <th className="print:hidden px-5 py-3">
                     <input
-                      aria-label="Seleccionar solicitudes visibles"
+                      aria-label="Seleccionar requerimientos visibles"
                       checked={areAllVisibleRequestsSelected}
                       className="h-4 w-4 rounded border-stone-300 text-emerald-800"
                       onChange={toggleAllVisibleRequests}
                       type="checkbox"
                     />
                   </th>
-                  <th className="px-5 py-3">Folio</th>
+                  <th className="px-5 py-3">Folios</th>
                   <th className="px-5 py-3">Cliente</th>
                   <th className="px-5 py-3">Dependencia/contacto</th>
                   <th className="px-5 py-3">Fecha</th>
@@ -1173,7 +1223,7 @@ export function SolicitudesClient() {
                   <tr key={request.id}>
                     <td className="print:hidden px-5 py-4">
                       <input
-                        aria-label={`Seleccionar solicitud ${request.folio || "sin folio"}`}
+                        aria-label={`Seleccionar requerimiento ${request.folio || "sin folio"}`}
                         checked={selectedRequestIds.has(request.id)}
                         className="h-4 w-4 rounded border-stone-300 text-emerald-800"
                         onChange={() => toggleRequestSelection(request.id)}
@@ -1185,8 +1235,14 @@ export function SolicitudesClient() {
                         className="text-emerald-800 hover:text-emerald-950 hover:underline"
                         href={`/dashboard/solicitudes/${request.id}`}
                       >
-                        {request.folio || "Sin folio"}
+                        Folio interno:{" "}
+                        {request.folio ? `#${request.folio}` : "Sin folio"}
                       </Link>
+                      {request.client_reference_folio ? (
+                        <p className="mt-1 text-xs font-normal text-stone-500">
+                          Folio del cliente: {request.client_reference_folio}
+                        </p>
+                      ) : null}
                     </td>
                     <td className="px-5 py-4 text-stone-700">
                       {request.client_id

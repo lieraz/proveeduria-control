@@ -120,8 +120,16 @@ function brandModelText(brand: string | null | undefined, model: string | null |
 function lineTitle(line: DeliveryLineRecord) {
   return line.product_description || "Partida sin descripción";
 }
-function deliveryLabel(delivery: DeliveryRecord | null, billing: BillingRecord) {
-  if (delivery) return `Entrega ${delivery.id.slice(0, 8)}`;
+function deliveryLabel(
+  delivery: DeliveryRecord | null,
+  billing: BillingRecord,
+  order: InternalOrderRecord | undefined,
+) {
+  if (delivery) {
+    return order?.folio
+      ? `Entrega · Orden #${order.folio}`
+      : `Entrega · ${formatDate(delivery.delivered_at ?? delivery.scheduled_date)}`;
+  }
   if (billing.delivered_at) return `Entrega sin liga · ${formatDate(billing.delivered_at)}`;
   return "Sin entrega ligada";
 }
@@ -565,7 +573,7 @@ export function FacturacionDetalleClient({ billingId }: FacturacionDetalleClient
                 <Info label="Cliente" value={clientName} />
                 <Info label="Orden" value={order?.folio ? `Orden #${order.folio}` : "Sin orden interna"} />
                 <Info label="Origen" value={billingSourceLabel(billing, billingLines)} />
-                <Info label="Entrega" value={deliveryLabel(delivery, billing)} />
+                <Info label="Entrega" value={deliveryLabel(delivery, billing, order)} />
                 <Info label="Estado" value={billing.status || BILLING_STATUSES[0]} badge />
                 <Info label="Subtotal" value={formatMoney(subtotal)} />
                 <Info label="IVA" value={formatMoney(taxAmount)} />
@@ -718,7 +726,7 @@ function PrintableBilling({ billing, billingLines, clientName, delivery, lines, 
         <PrintInfo label="Cliente" value={clientName} />
         <PrintInfo label="Orden" value={order?.folio ? `Orden #${order.folio}` : "Sin orden interna"} />
         <PrintInfo label="Origen" value={billingSourceLabel(billing, billingLines)} />
-        <PrintInfo label="Entrega" value={deliveryLabel(delivery, billing)} />
+        <PrintInfo label="Entrega" value={deliveryLabel(delivery, billing, order)} />
         <PrintInfo label="Estado" value={billing.status || BILLING_STATUSES[0]} />
         <PrintInfo label="Facturado el" value={formatDate(billing.invoiced_at)} />
         <PrintInfo label="Vence" value={formatDate(billing.due_date)} />

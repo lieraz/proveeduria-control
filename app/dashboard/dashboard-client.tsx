@@ -82,7 +82,7 @@ const deliveryStatuses = ["pendiente", "parcial", "entregado"];
 const billingStatuses = ["pendiente de facturar", "facturado", "vencido", "pagado"];
 
 const emptySections: DashboardSection[] = [
-  sectionShell("solicitudes", "Solicitudes", "Entradas de clientes por atender.", requestStatuses),
+  sectionShell("solicitudes", "Requerimientos", "Entradas de clientes por atender.", requestStatuses),
   sectionShell("cotizaciones", "Cotizaciones", "Propuestas comerciales activas.", quotationStatuses),
   sectionShell("ordenes", "Órdenes", "Órdenes internas aprobadas y en proceso.", orderStatuses),
   sectionShell("compras", "Compras/Recolecciones", "Compras con proveedores y recolecciones.", purchaseStatuses),
@@ -132,10 +132,6 @@ function numberValue(value: unknown) {
   }
 
   return null;
-}
-
-function shortId(id: string) {
-  return id.slice(0, 8);
 }
 
 function folioLabel(kind: string, folio: unknown, fallback: string) {
@@ -423,7 +419,7 @@ export function DashboardClient() {
                 const contactText = contactSummary(contact);
                 return {
                   id,
-                  title: folioLabel("Solicitud", row.folio, "Solicitud sin folio"),
+                  title: folioLabel("Requerimiento", row.folio, "Requerimiento sin folio"),
                   lines: [
                     clientId
                       ? clientsById.get(clientId) ?? "Cliente no especificado"
@@ -432,7 +428,6 @@ export function DashboardClient() {
                       requester ? `Solicita: ${requester}` : null,
                       contactText ?? (contactId ? "Contacto no especificado" : null),
                     ]),
-                    textValue(row.folio) ? null : `ID corto: ${shortId(id)}`,
                   ].filter((line): line is string => Boolean(line)),
                   status: textValue(row.status) ?? "nueva",
                   date: textValue(row.requested_at),
@@ -470,7 +465,6 @@ export function DashboardClient() {
                       : contactId
                         ? "Contacto no especificado"
                         : null,
-                    textValue(row.folio) ? null : `ID corto: ${shortId(id)}`,
                   ].filter((line): line is string => Boolean(line)),
                   status: textValue(row.status) ?? "borrador",
                   date: textValue(row.quoted_at),
@@ -513,7 +507,6 @@ export function DashboardClient() {
                   lines: [
                     clientName,
                     responsible ? `Responsable: ${responsible}` : contactText,
-                    textValue(row.folio) ? null : `ID corto: ${shortId(id)}`,
                   ].filter((line): line is string => Boolean(line)),
                   status: textValue(row.status) ?? "por comprar",
                   date: textValue(row.approved_at),
@@ -559,7 +552,6 @@ export function DashboardClient() {
                       assignedTo ? `Repartidor: ${assignedTo}` : null,
                     ]),
                     supplierId ? null : "Proveedor no especificado",
-                    `ID corto: ${shortId(id)}`,
                   ].filter((line): line is string => Boolean(line)),
                   status: textValue(row.status) ?? "pendiente",
                   date: textValue(row.scheduled_at) ?? textValue(row.created_at),
@@ -604,7 +596,6 @@ export function DashboardClient() {
                     clientName,
                     receivedBy ? `Recibe: ${receivedBy}` : null,
                     order && !orderLabel ? "Orden sin folio" : null,
-                    `ID corto: ${shortId(id)}`,
                   ].filter((line): line is string => Boolean(line)),
                   status: textValue(row.status) ?? "pendiente",
                   date: textValue(row.delivered_at) ?? textValue(row.scheduled_date),
@@ -651,7 +642,6 @@ export function DashboardClient() {
                     orderLabel ?? (order ? "Orden sin folio" : null),
                   ]),
                   joinParts([amount, textValue(row.due_date) ? `Vence: ${formatDate(textValue(row.due_date))}` : null]),
-                  textValue(row.invoice_folio) ? null : `ID corto: ${shortId(id)}`,
                 ].filter((line): line is string => Boolean(line)),
                 status: textValue(row.status) ?? "pendiente de facturar",
                 date: textValue(row.invoiced_at) ?? textValue(row.due_date),
@@ -679,7 +669,7 @@ export function DashboardClient() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-center gap-2">
         <QuickAction href="/dashboard/solicitudes" icon={<Plus className="h-4 w-4" aria-hidden="true" />}>
-          Nueva solicitud
+          Nuevo requerimiento
         </QuickAction>
         <QuickAction href="/dashboard/cotizaciones" icon={<FilePlus2 className="h-4 w-4" aria-hidden="true" />}>
           Nueva cotización

@@ -13,7 +13,7 @@ export default function LoginPage() {
           </h1>
           <p className="mt-3 text-sm leading-6 text-stone-600">
             Accede al panel interno para administrar clientes, proveedores,
-            solicitudes y facturación.
+            requerimientos y facturación.
           </p>
         </div>
 

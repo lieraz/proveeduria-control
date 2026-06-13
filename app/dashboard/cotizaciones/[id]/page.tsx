@@ -1,4 +1,5 @@
 import { DashboardShell } from "../../dashboard-shell";
+import { ProcessTrace } from "../../process-trace";
 import { CotizacionDetalleClient } from "./cotizacion-detalle-client";
 
 type CotizacionDetallePageProps = {
@@ -16,6 +17,7 @@ export default async function CotizacionDetallePage({
       eyebrow="Comercial"
       title="Detalle de cotización"
     >
+      <ProcessTrace startingEntityId={id} startingEntityType="quotation" />
       <CotizacionDetalleClient quotationId={id} />
     </DashboardShell>
   );
